@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./overlay.css";
 
@@ -13,6 +14,14 @@ type Preview = {
 type Point = {
   x: number;
   y: number;
+};
+
+type RemoteSelection = {
+  active: boolean;
+  xRatio: number;
+  yRatio: number;
+  widthRatio: number;
+  heightRatio: number;
 };
 
 function normalize(start: Point, end: Point) {
@@ -28,12 +37,32 @@ function Overlay() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [start, setStart] = useState<Point | null>(null);
   const [current, setCurrent] = useState<Point | null>(null);
+  const [remoteSelection, setRemoteSelection] = useState<RemoteSelection | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
   const rect = start && current ? normalize(start, current) : null;
+  const activeRect = remoteSelection?.active
+    ? {
+        left: `${remoteSelection.xRatio * 100}%`,
+        top: `${remoteSelection.yRatio * 100}%`,
+        width: `${remoteSelection.widthRatio * 100}%`,
+        height: `${remoteSelection.heightRatio * 100}%`,
+      }
+    : rect && preview
+      ? {
+          left: `${(rect.x / preview.width) * 100}%`,
+          top: `${(rect.y / preview.height) * 100}%`,
+          width: `${(rect.width / preview.width) * 100}%`,
+          height: `${(rect.height / preview.height) * 100}%`,
+        }
+      : null;
+
+  const loadPreview = useCallback(() => {
+    invoke<Preview>("get_pending_preview").then(setPreview).catch(() => getCurrentWindow().hide());
+  }, []);
 
   useEffect(() => {
-    invoke<Preview>("get_pending_preview").then(setPreview).catch(() => getCurrentWindow().hide());
+    loadPreview();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         getCurrentWindow().hide();
@@ -44,7 +73,32 @@ function Overlay() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [rect]);
+  }, [loadPreview, rect]);
+
+  useEffect(() => {
+    let unlistenRemote: undefined | (() => void);
+    let unlistenPreview: undefined | (() => void);
+    listen<RemoteSelection>("remote-selection", (event) => {
+      setStart(null);
+      setCurrent(null);
+      setRemoteSelection(event.payload.active ? event.payload : null);
+      loadPreview();
+    }).then((dispose) => {
+      unlistenRemote = dispose;
+    });
+    listen("screenshot-preview-updated", () => {
+      setRemoteSelection(null);
+      setStart(null);
+      setCurrent(null);
+      loadPreview();
+    }).then((dispose) => {
+      unlistenPreview = dispose;
+    });
+    return () => {
+      unlistenRemote?.();
+      unlistenPreview?.();
+    };
+  }, [loadPreview]);
 
   function pointFromEvent(event: React.PointerEvent): Point {
     const bounds = imageRef.current!.getBoundingClientRect();
@@ -75,33 +129,28 @@ function Overlay() {
         src={`data:image/png;base64,${preview.pngBase64}`}
         draggable={false}
         onPointerDown={(event) => {
+          if (remoteSelection?.active) {
+            return;
+          }
           const point = pointFromEvent(event);
           setStart(point);
           setCurrent(point);
         }}
         onPointerMove={(event) => {
-          if (start) {
+          if (start && !remoteSelection?.active) {
             setCurrent(pointFromEvent(event));
           }
         }}
         onPointerUp={() => {
-          if (rect && rect.width > 4 && rect.height > 4) {
+          if (rect && rect.width > 4 && rect.height > 4 && !remoteSelection?.active) {
             confirm();
           }
         }}
       />
-      {rect && (
-        <div
-          className="selection"
-          style={{
-            left: `${(rect.x / preview.width) * 100}%`,
-            top: `${(rect.y / preview.height) * 100}%`,
-            width: `${(rect.width / preview.width) * 100}%`,
-            height: `${(rect.height / preview.height) * 100}%`,
-          }}
-        />
-      )}
-      <div className="overlay-toolbar">拖拽选择区域，松开后发送到平板；Esc 取消</div>
+      {activeRect && <div className="selection" style={activeRect} />}
+      <div className="overlay-toolbar">
+        {remoteSelection?.active ? "平板正在划定截图区域；确认后发送到平板" : "拖拽选择区域，松开后发送到平板；Esc 取消"}
+      </div>
     </div>
   );
 }

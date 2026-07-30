@@ -2,16 +2,29 @@ use crate::{
     bridge::{save_devices, SharedBridge},
     capture::{
         build_screenshot_message, capture_primary_png, crop_png, preview_from_png, PendingPreview,
-        SelectionRect,
+        SelectionRatios, SelectionRect,
     },
     media::execute_media_command,
-    protocol::{AppStatus, BridgeStatus, ClientMessage, RemoteCommand, ServerMessage},
+    protocol::{
+        AppStatus, BridgeStatus, ClientMessage, RemoteCommand, RemoteSelectionPayload,
+        RemoteSelectionPhase, ServerMessage,
+    },
 };
 use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteSelectionEvent {
+    active: bool,
+    x_ratio: f64,
+    y_ratio: f64,
+    width_ratio: f64,
+    height_ratio: f64,
+}
 
 #[tauri::command]
 pub fn get_app_status(state: State<'_, SharedBridge>) -> AppStatus {
@@ -181,6 +194,21 @@ async fn handle_client_message(
                 }
             }
         }
+        ClientMessage::RemoteSelection(payload) => {
+            {
+                let mut guard = state.lock().expect("bridge state poisoned");
+                if !guard.touch_token(&payload.token) {
+                    return Err(anyhow!("device token is not paired"));
+                }
+                save_devices(app, &guard)?;
+            }
+            *authenticated = true;
+            handle_remote_selection(app, state, payload).await?;
+            Ok(Some(ServerMessage::Status {
+                status: BridgeStatus::Connected,
+                message: "remote selection updated".to_string(),
+            }))
+        }
         ClientMessage::Ping { token } => {
             if let Some(token) = token {
                 let mut guard = state.lock().expect("bridge state poisoned");
@@ -200,6 +228,114 @@ async fn broadcast_full_screenshot(state: &SharedBridge) -> Result<()> {
         .screenshot_tx
         .clone();
     let _ = tx.send(artifact.message);
+    Ok(())
+}
+
+async fn handle_remote_selection(
+    app: &AppHandle,
+    state: &SharedBridge,
+    payload: RemoteSelectionPayload,
+) -> Result<()> {
+    match payload.phase {
+        RemoteSelectionPhase::Begin => {
+            prepare_remote_selection(app, state)?;
+            emit_remote_selection(app, &payload, true)?;
+        }
+        RemoteSelectionPhase::Update => {
+            ensure_remote_selection_ready(app, state)?;
+            emit_remote_selection(app, &payload, true)?;
+        }
+        RemoteSelectionPhase::Confirm => {
+            ensure_remote_selection_ready(app, state)?;
+            emit_remote_selection(app, &payload, true)?;
+            confirm_remote_selection(app, state, payload)?;
+        }
+        RemoteSelectionPhase::Cancel => {
+            {
+                let mut guard = state.lock().expect("bridge state poisoned");
+                guard.pending_capture = None;
+            }
+            emit_remote_selection(app, &payload, false)?;
+            if let Some(window) = app.get_webview_window("overlay") {
+                let _ = window.hide();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prepare_remote_selection(app: &AppHandle, state: &SharedBridge) -> Result<()> {
+    let (png, width, height) = capture_primary_png()?;
+    {
+        let mut guard = state.lock().expect("bridge state poisoned");
+        guard.pending_capture = Some(crate::bridge::PendingCapture { png, width, height });
+    }
+    show_overlay_window(app)?;
+    let _ = app.emit("screenshot-preview-updated", ());
+    Ok(())
+}
+
+fn ensure_remote_selection_ready(app: &AppHandle, state: &SharedBridge) -> Result<()> {
+    let has_pending = state
+        .lock()
+        .expect("bridge state poisoned")
+        .pending_capture
+        .is_some();
+    if has_pending {
+        show_overlay_window(app)?;
+    } else {
+        prepare_remote_selection(app, state)?;
+    }
+    Ok(())
+}
+
+fn emit_remote_selection(
+    app: &AppHandle,
+    payload: &RemoteSelectionPayload,
+    active: bool,
+) -> Result<()> {
+    app.emit(
+        "remote-selection",
+        RemoteSelectionEvent {
+            active,
+            x_ratio: payload.x_ratio,
+            y_ratio: payload.y_ratio,
+            width_ratio: payload.width_ratio,
+            height_ratio: payload.height_ratio,
+        },
+    )?;
+    Ok(())
+}
+
+fn confirm_remote_selection(
+    app: &AppHandle,
+    state: &SharedBridge,
+    payload: RemoteSelectionPayload,
+) -> Result<()> {
+    let pending = {
+        let mut guard = state.lock().expect("bridge state poisoned");
+        guard.pending_capture.take()
+    }
+    .ok_or_else(|| anyhow!("no pending screenshot"))?;
+
+    let ratios = SelectionRatios {
+        x_ratio: payload.x_ratio,
+        y_ratio: payload.y_ratio,
+        width_ratio: payload.width_ratio,
+        height_ratio: payload.height_ratio,
+    };
+    let rect = ratios.to_rect(pending.width, pending.height);
+    let (png, width, height) = crop_png(&pending.png, rect)?;
+    let artifact = build_screenshot_message(png, width, height)?;
+    let tx = state
+        .lock()
+        .expect("bridge state poisoned")
+        .screenshot_tx
+        .clone();
+    let _ = tx.send(artifact.message);
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.hide();
+    }
     Ok(())
 }
 
@@ -232,19 +368,24 @@ pub fn open_screenshot_overlay(app: AppHandle) -> Result<(), String> {
         guard.pending_capture = Some(crate::bridge::PendingCapture { png, width, height });
     }
 
+    show_overlay_window(&app).map_err(|error| error.to_string())?;
+    let _ = app.emit("screenshot-preview-updated", ());
+    Ok(())
+}
+
+fn show_overlay_window(app: &AppHandle) -> Result<()> {
     if let Some(window) = app.get_webview_window("overlay") {
-        window.show().map_err(|error| error.to_string())?;
-        window.set_focus().map_err(|error| error.to_string())?;
+        window.show()?;
+        window.set_focus()?;
     } else {
-        WebviewWindowBuilder::new(&app, "overlay", WebviewUrl::App("overlay.html".into()))
+        WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
             .title("选择截图区域")
             .transparent(true)
             .decorations(false)
             .always_on_top(true)
             .fullscreen(true)
             .skip_taskbar(true)
-            .build()
-            .map_err(|error| error.to_string())?;
+            .build()?;
     }
     Ok(())
 }
@@ -272,7 +413,8 @@ pub fn confirm_screenshot_selection(
     .ok_or_else(|| "no pending screenshot".to_string())?;
 
     let (png, width, height) = crop_png(&pending.png, rect).map_err(|error| error.to_string())?;
-    let artifact = build_screenshot_message(png, width, height).map_err(|error| error.to_string())?;
+    let artifact =
+        build_screenshot_message(png, width, height).map_err(|error| error.to_string())?;
     let tx = state
         .lock()
         .expect("bridge state poisoned")

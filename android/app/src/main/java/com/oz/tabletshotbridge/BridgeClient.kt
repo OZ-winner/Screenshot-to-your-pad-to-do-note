@@ -124,6 +124,25 @@ object BridgeClient {
         socket?.send(message.toString())
     }
 
+    fun remoteSelection(
+        phase: String,
+        xRatio: Float,
+        yRatio: Float,
+        widthRatio: Float,
+        heightRatio: Float,
+    ) {
+        val activeToken = token ?: return
+        val message = JSONObject()
+            .put("type", "remote_selection")
+            .put("token", activeToken)
+            .put("phase", phase)
+            .put("x_ratio", xRatio.toDouble())
+            .put("y_ratio", yRatio.toDouble())
+            .put("width_ratio", widthRatio.toDouble())
+            .put("height_ratio", heightRatio.toDouble())
+        socket?.send(message.toString())
+    }
+
     fun sendPing() {
         val message = JSONObject()
             .put("type", "ping")

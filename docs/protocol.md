@@ -47,6 +47,31 @@ Commands:
 - `seek_back_5`
 - `seek_forward_5`
 
+## Remote Selection Screenshot
+
+The tablet can drive a rectangular selection using normalized coordinates. The Windows side shows the selection on top of the current screen capture while the user drags on the tablet. `confirm` crops the pending capture and broadcasts it as a normal `screenshot` message.
+
+Client:
+
+```json
+{
+  "type": "remote_selection",
+  "token": "random-token",
+  "phase": "update",
+  "x_ratio": 0.12,
+  "y_ratio": 0.18,
+  "width_ratio": 0.5,
+  "height_ratio": 0.35
+}
+```
+
+Phases:
+
+- `begin`: capture the current primary screen and open the Windows selection overlay.
+- `update`: move or resize the visible selection rectangle.
+- `confirm`: crop the selected rectangle and send it to paired tablets.
+- `cancel`: close the Windows selection overlay and discard the pending capture.
+
 ## Screenshot Delivery
 
 Server:

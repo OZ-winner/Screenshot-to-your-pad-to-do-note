@@ -65,7 +65,10 @@ impl BridgeState {
             port: self.port,
             local_ip: local_ip.clone(),
             pairing_code: self.pairing_code.clone(),
-            pairing_url: format!("ws://{}:{}/bridge?code={}", local_ip, self.port, self.pairing_code),
+            pairing_url: format!(
+                "ws://{}:{}/bridge?code={}",
+                local_ip, self.port, self.pairing_code
+            ),
             connected_clients: self.connected_clients,
             paired_devices: self
                 .paired_devices
@@ -92,7 +95,8 @@ impl BridgeState {
             token,
             last_seen: Utc::now(),
         };
-        self.paired_devices.insert(device.token.clone(), device.clone());
+        self.paired_devices
+            .insert(device.token.clone(), device.clone());
         device
     }
 

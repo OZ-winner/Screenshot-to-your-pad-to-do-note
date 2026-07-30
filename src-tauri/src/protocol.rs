@@ -16,6 +16,26 @@ pub struct CommandPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub struct RemoteSelectionPayload {
+    pub token: String,
+    pub phase: RemoteSelectionPhase,
+    pub x_ratio: f64,
+    pub y_ratio: f64,
+    pub width_ratio: f64,
+    pub height_ratio: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteSelectionPhase {
+    Begin,
+    Update,
+    Confirm,
+    Cancel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RemoteCommand {
     Screenshot,
     PlayPause,
@@ -28,6 +48,7 @@ pub enum RemoteCommand {
 pub enum ClientMessage {
     Pair(PairPayload),
     Command(CommandPayload),
+    RemoteSelection(RemoteSelectionPayload),
     Ping { token: Option<String> },
 }
 

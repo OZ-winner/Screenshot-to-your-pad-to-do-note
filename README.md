@@ -9,8 +9,9 @@
 
 - Windows 端显示配对二维码、配对码、局域网地址和已配对设备。
 - 平板端扫码配对，保存 token，后续可自动重连。
-- 平板悬浮窗包含：截图、后退 5 秒、暂停/播放、快进 5 秒。
+- 平板悬浮窗包含：全屏截图、远程选区截图、后退 5 秒、暂停/播放、快进 5 秒。
 - 平板发送截图命令时，Windows 端截取主屏全屏并发送到平板相册。
+- 平板点 `框` 后会出现可拖动/缩放的长方形选区，电脑端同步显示对应屏幕区域，确认后裁剪发送到平板相册。
 - Windows 端 `Ctrl+Alt+A` 或主界面按钮会打开选区截图预览，松开鼠标后发送选区截图。
 - 图片写入安卓系统相册：`Pictures/PC Screenshots`。
 
@@ -64,6 +65,7 @@ android\app\build\outputs\apk\debug\app-debug.apk
 悬浮窗按钮：
 
 - `截`：让电脑截图并传到平板相册。
+- `框`：在平板上划定长方形区域，电脑同步显示选区，点发送后截图传到平板相册。
 - `退`：让电脑当前视频后退 5 秒。
 - `停`：暂停/播放当前视频。
 - `进`：让电脑当前视频快进 5 秒。
@@ -187,6 +189,27 @@ File -> Settings -> Languages & Frameworks -> Android SDK
 - `seek_back_5`
 - `seek_forward_5`
 
+平板远程选区：
+
+```json
+{
+  "type": "remote_selection",
+  "token": "paired-token",
+  "phase": "begin",
+  "x_ratio": 0.12,
+  "y_ratio": 0.18,
+  "width_ratio": 0.5,
+  "height_ratio": 0.35
+}
+```
+
+`phase` 可用值：
+
+- `begin`
+- `update`
+- `confirm`
+- `cancel`
+
 服务端截图：
 
 ```json
@@ -205,6 +228,6 @@ File -> Settings -> Languages & Frameworks -> Android SDK
 ## V1 限制
 
 - 选区截图目前基于主屏截图预览，尚未做完整多显示器虚拟桌面选区。
-- 平板一键截图默认直接截主屏全屏，避免远程触发后还要回电脑确认。
+- 平板一键截图默认直接截主屏全屏；需要区域截图时使用悬浮窗的 `框`。
 - 视频控制通过模拟当前活动窗口快捷键实现，默认适配多数浏览器/播放器。
 - 如果 Windows 防火墙提示网络访问，需要允许专用网络通信。

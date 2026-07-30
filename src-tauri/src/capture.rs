@@ -31,10 +31,37 @@ pub struct SelectionRect {
     pub height: u32,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectionRatios {
+    pub x_ratio: f64,
+    pub y_ratio: f64,
+    pub width_ratio: f64,
+    pub height_ratio: f64,
+}
+
+impl SelectionRatios {
+    pub fn to_rect(&self, screen_width: u32, screen_height: u32) -> SelectionRect {
+        let x_ratio = self.x_ratio.clamp(0.0, 1.0);
+        let y_ratio = self.y_ratio.clamp(0.0, 1.0);
+        let width_ratio = self.width_ratio.clamp(0.0, 1.0 - x_ratio);
+        let height_ratio = self.height_ratio.clamp(0.0, 1.0 - y_ratio);
+
+        SelectionRect {
+            x: (x_ratio * screen_width as f64).round() as u32,
+            y: (y_ratio * screen_height as f64).round() as u32,
+            width: (width_ratio * screen_width as f64).round().max(1.0) as u32,
+            height: (height_ratio * screen_height as f64).round().max(1.0) as u32,
+        }
+    }
+}
+
 pub fn capture_primary_png() -> Result<(Vec<u8>, u32, u32)> {
     let screens = Screen::all().context("failed to enumerate screens")?;
     let screen = screens.first().ok_or_else(|| anyhow!("no screens found"))?;
-    let image = screen.capture().context("failed to capture primary screen")?;
+    let image = screen
+        .capture()
+        .context("failed to capture primary screen")?;
     let width = image.width();
     let height = image.height();
     let mut cursor = Cursor::new(Vec::new());
@@ -58,7 +85,11 @@ pub fn crop_png(png: &[u8], rect: SelectionRect) -> Result<(Vec<u8>, u32, u32)> 
     Ok((cursor.into_inner(), width, height))
 }
 
-pub fn build_screenshot_message(png: Vec<u8>, width: u32, height: u32) -> Result<ScreenshotArtifact> {
+pub fn build_screenshot_message(
+    png: Vec<u8>,
+    width: u32,
+    height: u32,
+) -> Result<ScreenshotArtifact> {
     let now = Local::now();
     let filename = format!("PC_{}.png", now.format("%Y%m%d_%H%M%S"));
     let mut hasher = Sha256::new();
