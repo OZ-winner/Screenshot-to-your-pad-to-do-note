@@ -1,0 +1,274 @@
+:root {
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  color: #18202a;
+  background: #f5f7fb;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 780px;
+}
+
+button {
+  border: 0;
+  border-radius: 8px;
+  background: #165dff;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 650;
+}
+
+button:hover {
+  background: #0f49d6;
+}
+
+code {
+  border-radius: 6px;
+  background: #eef2f7;
+  color: #243043;
+  display: block;
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 26px;
+}
+
+.topbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.topbar h1,
+.panel h2 {
+  margin: 0;
+}
+
+.topbar h1 {
+  font-size: 30px;
+}
+
+.topbar p,
+.panel p {
+  color: #667085;
+  margin: 6px 0 0;
+}
+
+.status-pill {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  font-weight: 700;
+}
+
+.status-pill[data-state="on"] {
+  background: #def8e6;
+  color: #087443;
+}
+
+.status-pill[data-state="off"] {
+  background: #fee4e2;
+  color: #b42318;
+}
+
+.content-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(440px, 1.35fr) minmax(300px, 0.8fr);
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #d9e2ee;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.pairing-panel {
+  grid-row: span 2;
+}
+
+.panel-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.icon-button {
+  background: #edf3ff;
+  color: #165dff;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  width: 38px;
+}
+
+.icon-button:hover {
+  background: #dce8ff;
+}
+
+.icon-button.danger {
+  background: #fff1f0;
+  color: #d92d20;
+}
+
+.pairing-body {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 240px minmax(0, 1fr);
+  align-items: center;
+}
+
+.qr-box {
+  align-items: center;
+  aspect-ratio: 1;
+  background: #f8fafc;
+  border: 1px dashed #bdc7d6;
+  border-radius: 8px;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  width: 240px;
+}
+
+.qr-box img {
+  display: block;
+  height: 220px;
+  width: 220px;
+}
+
+.pairing-details {
+  display: grid;
+  gap: 8px;
+}
+
+.pairing-details label {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pairing-details strong {
+  color: #165dff;
+  font-size: 38px;
+  letter-spacing: 0;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.remote-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.remote-grid button {
+  background: #1f2a37;
+  min-height: 74px;
+  flex-direction: column;
+}
+
+.remote-grid button:hover {
+  background: #111827;
+}
+
+.hint {
+  align-items: center;
+  background: #f8fafc;
+  border-radius: 8px;
+  color: #667085;
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.devices-panel {
+  min-height: 240px;
+}
+
+.empty-state {
+  align-items: center;
+  border: 1px dashed #c7d3e3;
+  border-radius: 8px;
+  color: #667085;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+  min-height: 130px;
+}
+
+.device-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.device-list li {
+  align-items: center;
+  background: #f8fafc;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 12px;
+}
+
+.device-list span {
+  font-weight: 700;
+}
+
+.device-list time {
+  color: #667085;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  body {
+    min-width: 0;
+  }
+
+  .app-shell {
+    padding: 18px;
+  }
+
+  .content-grid,
+  .pairing-body {
+    grid-template-columns: 1fr;
+  }
+}

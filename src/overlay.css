@@ -1,0 +1,66 @@
+:root {
+  background: transparent;
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+.overlay-shell {
+  align-items: center;
+  background: rgba(7, 12, 20, 0.34);
+  display: flex;
+  height: 100vh;
+  justify-content: center;
+  position: relative;
+  width: 100vw;
+}
+
+.screen-preview {
+  cursor: crosshair;
+  display: block;
+  height: 100vh;
+  object-fit: contain;
+  user-select: none;
+  width: 100vw;
+}
+
+.selection {
+  border: 2px solid #ffffff;
+  box-shadow:
+    0 0 0 9999px rgba(0, 0, 0, 0.46),
+    0 0 0 1px #165dff inset;
+  pointer-events: none;
+  position: absolute;
+}
+
+.overlay-toolbar,
+.overlay-loading {
+  align-items: center;
+  background: rgba(17, 24, 39, 0.84);
+  border-radius: 8px;
+  color: #fff;
+  display: flex;
+  font-size: 14px;
+  font-weight: 700;
+  justify-content: center;
+  left: 50%;
+  min-height: 40px;
+  padding: 0 16px;
+  position: fixed;
+  top: 18px;
+  transform: translateX(-50%);
+}
+
+.overlay-loading {
+  inset: 0;
+  margin: auto;
+  transform: none;
+  width: 180px;
+}
