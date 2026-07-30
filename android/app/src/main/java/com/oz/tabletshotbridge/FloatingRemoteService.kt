@@ -2,7 +2,6 @@ package com.oz.tabletshotbridge
 
 import android.app.Service
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
@@ -11,13 +10,17 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.setPadding
 
 class FloatingRemoteService : Service() {
+    companion object {
+        const val ACTION_START_SELECTION = "com.oz.tabletshotbridge.START_SELECTION"
+    }
+
     private lateinit var windowManager: WindowManager
     private var panel: LinearLayout? = null
     private var selectionOverlay: FrameLayout? = null
@@ -32,10 +35,27 @@ class FloatingRemoteService : Service() {
             return
         }
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        showPanel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (!::windowManager.isInitialized) {
+            windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        }
+        if (panel == null) {
+            showPanel()
+        }
+        if (intent?.action == ACTION_START_SELECTION) {
+            BridgeClient.connectSaved()
+            panel?.postDelayed({ showSelectionOverlay() }, 120)
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         panel?.let { windowManager.removeView(it) }
@@ -46,17 +66,17 @@ class FloatingRemoteService : Service() {
     }
 
     private fun showPanel() {
+        val gripView = grip()
         val view = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(8)
             background = roundedBackground()
-            addView(grip())
-            addView(remoteButton("截") { BridgeClient.command("screenshot") })
-            addView(remoteButton("框") { showSelectionOverlay() })
-            addView(remoteButton("退") { BridgeClient.command("seek_back_5") })
-            addView(remoteButton("停") { BridgeClient.command("play_pause") })
-            addView(remoteButton("进") { BridgeClient.command("seek_forward_5") })
+            addView(gripView)
+            addView(iconButton(R.drawable.ic_screenshot_area, "截图") { showSelectionOverlay() })
+            addView(iconButton(R.drawable.ic_rewind, "后退 5 秒") { BridgeClient.command("seek_back_5") })
+            addView(iconButton(R.drawable.ic_pause, "暂停播放") { BridgeClient.command("play_pause") })
+            addView(iconButton(R.drawable.ic_fast_forward, "快进 5 秒") { BridgeClient.command("seek_forward_5") })
         }
 
         val layoutParams = WindowManager.LayoutParams(
@@ -71,7 +91,7 @@ class FloatingRemoteService : Service() {
             y = 160
         }
 
-        attachDrag(view, layoutParams)
+        attachDrag(gripView, view, layoutParams)
         panel = view
         params = layoutParams
         windowManager.addView(view, layoutParams)
@@ -82,6 +102,9 @@ class FloatingRemoteService : Service() {
             text = "≡"
             textSize = 20f
             setTextColor(0xffffffff.toInt())
+            minWidth = 54
+            minHeight = 58
+            gravity = Gravity.CENTER
             setPadding(12)
         }
     }
@@ -90,90 +113,67 @@ class FloatingRemoteService : Service() {
         if (selectionOverlay != null) {
             return
         }
+        BridgeClient.connectSaved()
 
         val root = FrameLayout(this).apply {
             setBackgroundColor(0x33000000)
         }
-        val metrics = resources.displayMetrics
-        var rectX = (metrics.widthPixels * 0.16f).toInt()
-        var rectY = (metrics.heightPixels * 0.18f).toInt()
-        var rectW = (metrics.widthPixels * 0.56f).toInt()
-        var rectH = (metrics.heightPixels * 0.36f).toInt()
+        var rectX = 0
+        var rectY = 0
+        var rectW = 0
+        var rectH = 0
+        var downX = 0f
+        var downY = 0f
+        var hasSelection = false
+
+        val touchLayer = FrameLayout(this)
+        root.addView(
+            touchLayer,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
 
         val rectView = FrameLayout(this).apply {
             background = selectionBorder()
-            addView(
-                TextView(this@FloatingRemoteService).apply {
-                    text = "拖动选区，右下角缩放"
-                    textSize = 14f
-                    setTextColor(Color.WHITE)
-                    setPadding(12)
-                    background = roundedBackground(0xaa111827.toInt(), 8f)
-                },
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    Gravity.TOP or Gravity.START,
-                ),
-            )
-            addView(
-                TextView(this@FloatingRemoteService).apply {
-                    text = "↘"
-                    textSize = 24f
-                    gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
-                    background = roundedBackground(0xdd16a34a.toInt(), 12f)
-                },
-                FrameLayout.LayoutParams(60, 60, Gravity.BOTTOM or Gravity.END),
-            )
+            visibility = View.GONE
         }
-        val rectLayout = FrameLayout.LayoutParams(rectW, rectH).apply {
-            leftMargin = rectX
-            topMargin = rectY
-        }
+        val rectLayout = FrameLayout.LayoutParams(1, 1)
         root.addView(rectView, rectLayout)
 
-        val actions = LinearLayout(this).apply {
+        lateinit var actions: LinearLayout
+        actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(10)
             background = roundedBackground(0xdd111827.toInt(), 14f)
-            addView(remoteButton("发送") {
-                sendSelection("confirm", root, rectX, rectY, rectW, rectH)
-                closeSelectionOverlay()
-            })
-            addView(remoteButton("取消") {
+            visibility = View.GONE
+            addView(actionButton(R.drawable.ic_close, "取消") {
                 sendSelection("cancel", root, rectX, rectY, rectW, rectH)
                 closeSelectionOverlay()
             })
+            addView(actionButton(R.drawable.ic_redraw, "重新划区") {
+                hasSelection = false
+                rectView.visibility = View.GONE
+                actions.visibility = View.GONE
+                sendSelection("cancel", root, rectX, rectY, rectW, rectH)
+            })
+            addView(actionButton(R.drawable.ic_check, "保存") {
+                if (hasSelection && rectW > 8 && rectH > 8) {
+                    sendSelection("confirm", root, rectX, rectY, rectW, rectH)
+                    closeSelectionOverlay()
+                }
+            })
         }
-        root.addView(
-            actions,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
-            ).apply {
-                bottomMargin = 54
-            },
-        )
-
-        attachSelectionTouch(
-            rectView = rectView,
-            root = root,
-            getRect = { Quad(rectX, rectY, rectW, rectH) },
-            setRect = { next ->
-                rectX = next.x
-                rectY = next.y
-                rectW = next.width
-                rectH = next.height
-                rectLayout.leftMargin = rectX
-                rectLayout.topMargin = rectY
-                rectLayout.width = rectW
-                rectLayout.height = rectH
-                rectView.layoutParams = rectLayout
-            },
-        )
+        val actionsLayout = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+        ).apply {
+            bottomMargin = 54
+        }
+        root.addView(actions, actionsLayout)
 
         val layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -190,65 +190,47 @@ class FloatingRemoteService : Service() {
         selectionOverlay = root
         windowManager.addView(root, layoutParams)
         root.post {
-            sendSelection("begin", root, rectX, rectY, rectW, rectH)
+            sendSelection("begin", root, 0, 0, 0, 0)
         }
-    }
 
-    private fun closeSelectionOverlay() {
-        selectionOverlay?.let { windowManager.removeView(it) }
-        selectionOverlay = null
-    }
-
-    private fun attachSelectionTouch(
-        rectView: View,
-        root: View,
-        getRect: () -> Quad,
-        setRect: (Quad) -> Unit,
-    ) {
-        var start = Quad(0, 0, 0, 0)
-        var downX = 0f
-        var downY = 0f
-        var resizing = false
-
-        rectView.setOnTouchListener { _, event ->
+        touchLayer.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    start = getRect()
                     downX = event.rawX
                     downY = event.rawY
-                    resizing = event.x > start.width - 86 && event.y > start.height - 86
-                    sendSelection("begin", root, start.x, start.y, start.width, start.height)
+                    hasSelection = false
+                    actions.visibility = View.GONE
+                    rectView.visibility = View.VISIBLE
+                    rectX = downX.toInt()
+                    rectY = downY.toInt()
+                    rectW = 1
+                    rectH = 1
+                    applyRect(rectView, rectLayout, rectX, rectY, rectW, rectH)
+                    sendSelection("begin", root, rectX, rectY, rectW, rectH)
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (event.rawX - downX).toInt()
-                    val dy = (event.rawY - downY).toInt()
-                    val next = if (resizing) {
-                        clampRect(
-                            root,
-                            start.x,
-                            start.y,
-                            start.width + dx,
-                            start.height + dy,
-                        )
-                    } else {
-                        clampRect(
-                            root,
-                            start.x + dx,
-                            start.y + dy,
-                            start.width,
-                            start.height,
-                        )
-                    }
-                    setRect(next)
-                    sendSelection("update", root, next.x, next.y, next.width, next.height)
+                    val next = rectFromDrag(root, downX, downY, event.rawX, event.rawY)
+                    rectX = next.x
+                    rectY = next.y
+                    rectW = next.width
+                    rectH = next.height
+                    applyRect(rectView, rectLayout, rectX, rectY, rectW, rectH)
+                    sendSelection("update", root, rectX, rectY, rectW, rectH)
                     true
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val next = getRect()
-                    sendSelection("update", root, next.x, next.y, next.width, next.height)
+                    val next = rectFromDrag(root, downX, downY, event.rawX, event.rawY)
+                    rectX = next.x
+                    rectY = next.y
+                    rectW = next.width
+                    rectH = next.height
+                    hasSelection = rectW > 8 && rectH > 8
+                    applyRect(rectView, rectLayout, rectX, rectY, rectW, rectH)
+                    sendSelection("update", root, rectX, rectY, rectW, rectH)
+                    actions.visibility = if (hasSelection) View.VISIBLE else View.GONE
                     true
                 }
 
@@ -257,14 +239,34 @@ class FloatingRemoteService : Service() {
         }
     }
 
-    private fun clampRect(root: View, x: Int, y: Int, width: Int, height: Int): Quad {
+    private fun closeSelectionOverlay() {
+        selectionOverlay?.let { windowManager.removeView(it) }
+        selectionOverlay = null
+    }
+
+    private fun applyRect(
+        rectView: View,
+        layoutParams: FrameLayout.LayoutParams,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+    ) {
+        layoutParams.leftMargin = x
+        layoutParams.topMargin = y
+        layoutParams.width = width.coerceAtLeast(1)
+        layoutParams.height = height.coerceAtLeast(1)
+        rectView.layoutParams = layoutParams
+    }
+
+    private fun rectFromDrag(root: View, startX: Float, startY: Float, endX: Float, endY: Float): Quad {
         val rootWidth = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val rootHeight = root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
-        val nextWidth = width.coerceIn(140, rootWidth)
-        val nextHeight = height.coerceIn(110, rootHeight)
-        val nextX = x.coerceIn(0, (rootWidth - nextWidth).coerceAtLeast(0))
-        val nextY = y.coerceIn(0, (rootHeight - nextHeight).coerceAtLeast(0))
-        return Quad(nextX, nextY, nextWidth, nextHeight)
+        val left = kotlin.math.min(startX, endX).toInt().coerceIn(0, rootWidth - 1)
+        val top = kotlin.math.min(startY, endY).toInt().coerceIn(0, rootHeight - 1)
+        val right = kotlin.math.max(startX, endX).toInt().coerceIn(left + 1, rootWidth)
+        val bottom = kotlin.math.max(startY, endY).toInt().coerceIn(top + 1, rootHeight)
+        return Quad(left, top, right - left, bottom - top)
     }
 
     private fun sendSelection(phase: String, root: View, x: Int, y: Int, width: Int, height: Int) {
@@ -279,40 +281,67 @@ class FloatingRemoteService : Service() {
         )
     }
 
-    private fun remoteButton(text: String, onClick: () -> Unit): Button {
-        return Button(this).apply {
-            this.text = text
-            textSize = 15f
-            minWidth = 72
-            minHeight = 58
+    private fun iconButton(iconRes: Int, description: String, onClick: () -> Unit): ImageButton {
+        return ImageButton(this).apply {
+            contentDescription = description
+            setImageResource(iconRes)
+            setColorFilter(0xffffffff.toInt())
+            background = roundedBackground(0x22ffffff, 10f)
+            minimumWidth = 72
+            minimumHeight = 58
+            setPadding(16)
             setOnClickListener { onClick() }
         }
     }
 
-    private fun attachDrag(view: LinearLayout, layoutParams: WindowManager.LayoutParams) {
+    private fun actionButton(iconRes: Int, description: String, onClick: () -> Unit): ImageButton {
+        return ImageButton(this).apply {
+            contentDescription = description
+            setImageResource(iconRes)
+            setColorFilter(0xffffffff.toInt())
+            background = roundedBackground(0x3316a34a, 12f)
+            layoutParams = LinearLayout.LayoutParams(72, 62).apply {
+                marginStart = 6
+                marginEnd = 6
+            }
+            setPadding(16)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun attachDrag(
+        dragHandle: View,
+        target: View,
+        layoutParams: WindowManager.LayoutParams,
+    ) {
         var startX = 0
         var startY = 0
         var downX = 0f
         var downY = 0f
 
-        view.setOnTouchListener { _, event ->
-            when (event.action) {
+        dragHandle.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     startX = layoutParams.x
                     startY = layoutParams.y
                     downX = event.rawX
                     downY = event.rawY
-                    false
-                }
-
-                MotionEvent.ACTION_MOVE -> {
-                    layoutParams.x = startX + (event.rawX - downX).toInt()
-                    layoutParams.y = startY + (event.rawY - downY).toInt()
-                    windowManager.updateViewLayout(view, layoutParams)
                     true
                 }
 
-                else -> false
+                MotionEvent.ACTION_MOVE -> {
+                    val displayWidth = resources.displayMetrics.widthPixels
+                    val displayHeight = resources.displayMetrics.heightPixels
+                    val maxX = (displayWidth - target.width).coerceAtLeast(0)
+                    val maxY = (displayHeight - target.height).coerceAtLeast(0)
+                    layoutParams.x = (startX + (event.rawX - downX).toInt()).coerceIn(0, maxX)
+                    layoutParams.y = (startY + (event.rawY - downY).toInt()).coerceIn(0, maxY)
+                    windowManager.updateViewLayout(target, layoutParams)
+                    true
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
+                else -> true
             }
         }
     }

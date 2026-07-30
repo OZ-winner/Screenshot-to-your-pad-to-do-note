@@ -1,4 +1,7 @@
-use crate::protocol::{AppStatus, PublicDevice, ServerMessage};
+use crate::{
+    capture::SelectionRatios,
+    protocol::{AppStatus, PublicDevice, ServerMessage},
+};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rand::{distributions::Alphanumeric, Rng};
@@ -31,6 +34,7 @@ pub struct BridgeState {
     pub connected_clients: usize,
     pub screenshot_tx: broadcast::Sender<ServerMessage>,
     pub pending_capture: Option<PendingCapture>,
+    pub remote_selection: Option<SelectionRatios>,
 }
 
 impl Default for BridgeState {
@@ -44,6 +48,7 @@ impl Default for BridgeState {
             connected_clients: 0,
             screenshot_tx,
             pending_capture: None,
+            remote_selection: None,
         }
     }
 }

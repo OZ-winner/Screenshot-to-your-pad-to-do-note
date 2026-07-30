@@ -60,7 +60,25 @@ class MainActivity : ComponentActivity() {
                     BridgeScreen(
                         hasOverlayPermission = Settings.canDrawOverlays(this),
                         requestOverlayPermission = { openOverlayPermission() },
-                        startFloatingWindow = { startService(Intent(this, FloatingRemoteService::class.java)) },
+                        startFloatingWindow = {
+                            if (!Settings.canDrawOverlays(this)) {
+                                openOverlayPermission()
+                            } else {
+                                BridgeClient.connectSaved()
+                                startService(Intent(this, FloatingRemoteService::class.java))
+                            }
+                        },
+                        startSelectionScreenshot = {
+                            if (!Settings.canDrawOverlays(this)) {
+                                openOverlayPermission()
+                            } else {
+                                BridgeClient.connectSaved()
+                                startService(
+                                    Intent(this, FloatingRemoteService::class.java)
+                                        .setAction(FloatingRemoteService.ACTION_START_SELECTION),
+                                )
+                            }
+                        },
                     )
                 }
             }
@@ -81,6 +99,7 @@ private fun BridgeScreen(
     hasOverlayPermission: Boolean,
     requestOverlayPermission: () -> Unit,
     startFloatingWindow: () -> Unit,
+    startSelectionScreenshot: () -> Unit,
 ) {
     val state by BridgeClient.state.collectAsState()
     var url by remember { mutableStateOf("") }
@@ -200,7 +219,7 @@ private fun BridgeScreen(
         Spacer(modifier = Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             RemoteButton("截图", modifier = Modifier.weight(1f), icon = { Icon(Icons.Default.CameraAlt, null) }) {
-                BridgeClient.command("screenshot")
+                startSelectionScreenshot()
             }
             RemoteButton("后退", modifier = Modifier.weight(1f), icon = { Icon(Icons.Default.Replay5, null) }) {
                 BridgeClient.command("seek_back_5")

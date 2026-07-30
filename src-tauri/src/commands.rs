@@ -18,7 +18,7 @@ use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct RemoteSelectionEvent {
+pub struct RemoteSelectionEvent {
     active: bool,
     x_ratio: f64,
     y_ratio: f64,
@@ -29,6 +29,22 @@ struct RemoteSelectionEvent {
 #[tauri::command]
 pub fn get_app_status(state: State<'_, SharedBridge>) -> AppStatus {
     state.lock().expect("bridge state poisoned").status()
+}
+
+#[tauri::command]
+pub fn get_remote_selection(state: State<'_, SharedBridge>) -> Option<RemoteSelectionEvent> {
+    state
+        .lock()
+        .expect("bridge state poisoned")
+        .remote_selection
+        .clone()
+        .map(|selection| RemoteSelectionEvent {
+            active: true,
+            x_ratio: selection.x_ratio,
+            y_ratio: selection.y_ratio,
+            width_ratio: selection.width_ratio,
+            height_ratio: selection.height_ratio,
+        })
 }
 
 #[tauri::command]
@@ -238,15 +254,18 @@ async fn handle_remote_selection(
 ) -> Result<()> {
     match payload.phase {
         RemoteSelectionPhase::Begin => {
-            prepare_remote_selection(app, state)?;
+            ensure_remote_selection_ready(app, state)?;
+            set_remote_selection(state, &payload, true);
             emit_remote_selection(app, &payload, true)?;
         }
         RemoteSelectionPhase::Update => {
             ensure_remote_selection_ready(app, state)?;
+            set_remote_selection(state, &payload, true);
             emit_remote_selection(app, &payload, true)?;
         }
         RemoteSelectionPhase::Confirm => {
             ensure_remote_selection_ready(app, state)?;
+            set_remote_selection(state, &payload, true);
             emit_remote_selection(app, &payload, true)?;
             confirm_remote_selection(app, state, payload)?;
         }
@@ -254,6 +273,7 @@ async fn handle_remote_selection(
             {
                 let mut guard = state.lock().expect("bridge state poisoned");
                 guard.pending_capture = None;
+                guard.remote_selection = None;
             }
             emit_remote_selection(app, &payload, false)?;
             if let Some(window) = app.get_webview_window("overlay") {
@@ -307,6 +327,16 @@ fn emit_remote_selection(
     Ok(())
 }
 
+fn set_remote_selection(state: &SharedBridge, payload: &RemoteSelectionPayload, active: bool) {
+    let mut guard = state.lock().expect("bridge state poisoned");
+    guard.remote_selection = active.then_some(SelectionRatios {
+        x_ratio: payload.x_ratio,
+        y_ratio: payload.y_ratio,
+        width_ratio: payload.width_ratio,
+        height_ratio: payload.height_ratio,
+    });
+}
+
 fn confirm_remote_selection(
     app: &AppHandle,
     state: &SharedBridge,
@@ -333,6 +363,7 @@ fn confirm_remote_selection(
         .screenshot_tx
         .clone();
     let _ = tx.send(artifact.message);
+    state.lock().expect("bridge state poisoned").remote_selection = None;
     if let Some(window) = app.get_webview_window("overlay") {
         let _ = window.hide();
     }

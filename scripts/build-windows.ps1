@@ -14,4 +14,4 @@ if (!(Test-Path "node_modules")) {
   npm install
 }
 
-cmd /c "`"$vcvars`" && npm run build && cargo build --manifest-path src-tauri\Cargo.toml"
+cmd /c "`"$vcvars`" && npm run tauri build -- --bundles nsis"

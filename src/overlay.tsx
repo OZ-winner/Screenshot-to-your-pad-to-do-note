@@ -37,6 +37,8 @@ function Overlay() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [start, setStart] = useState<Point | null>(null);
   const [current, setCurrent] = useState<Point | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [localReady, setLocalReady] = useState(false);
   const [remoteSelection, setRemoteSelection] = useState<RemoteSelection | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
@@ -57,8 +59,15 @@ function Overlay() {
         }
       : null;
 
-  const loadPreview = useCallback(() => {
-    invoke<Preview>("get_pending_preview").then(setPreview).catch(() => getCurrentWindow().hide());
+  const loadPreview = useCallback(async () => {
+    try {
+      const nextPreview = await invoke<Preview>("get_pending_preview");
+      const nextRemote = await invoke<RemoteSelection | null>("get_remote_selection");
+      setPreview(nextPreview);
+      setRemoteSelection(nextRemote?.active ? nextRemote : null);
+    } catch {
+      setPreview(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -67,7 +76,7 @@ function Overlay() {
       if (event.key === "Escape") {
         getCurrentWindow().hide();
       }
-      if (event.key === "Enter" && rect) {
+      if (event.key === "Enter" && rect && localReady) {
         confirm();
       }
     };
@@ -78,11 +87,22 @@ function Overlay() {
   useEffect(() => {
     let unlistenRemote: undefined | (() => void);
     let unlistenPreview: undefined | (() => void);
+    const poll = window.setInterval(() => {
+      if (!preview) {
+        loadPreview();
+      }
+      invoke<RemoteSelection | null>("get_remote_selection")
+        .then((selection) => {
+          setRemoteSelection(selection?.active ? selection : null);
+        })
+        .catch(() => undefined);
+    }, 100);
     listen<RemoteSelection>("remote-selection", (event) => {
       setStart(null);
       setCurrent(null);
+      setIsDragging(false);
+      setLocalReady(false);
       setRemoteSelection(event.payload.active ? event.payload : null);
-      loadPreview();
     }).then((dispose) => {
       unlistenRemote = dispose;
     });
@@ -90,15 +110,18 @@ function Overlay() {
       setRemoteSelection(null);
       setStart(null);
       setCurrent(null);
+      setIsDragging(false);
+      setLocalReady(false);
       loadPreview();
     }).then((dispose) => {
       unlistenPreview = dispose;
     });
     return () => {
+      window.clearInterval(poll);
       unlistenRemote?.();
       unlistenPreview?.();
     };
-  }, [loadPreview]);
+  }, [loadPreview, preview]);
 
   function pointFromEvent(event: React.PointerEvent): Point {
     const bounds = imageRef.current!.getBoundingClientRect();
@@ -135,21 +158,47 @@ function Overlay() {
           const point = pointFromEvent(event);
           setStart(point);
           setCurrent(point);
+          setIsDragging(true);
+          setLocalReady(false);
         }}
         onPointerMove={(event) => {
-          if (start && !remoteSelection?.active) {
+          if (start && isDragging && !remoteSelection?.active) {
             setCurrent(pointFromEvent(event));
           }
         }}
         onPointerUp={() => {
           if (rect && rect.width > 4 && rect.height > 4 && !remoteSelection?.active) {
-            confirm();
+            setLocalReady(true);
           }
+          setIsDragging(false);
         }}
       />
       {activeRect && <div className="selection" style={activeRect} />}
+      {rect && localReady && !remoteSelection?.active && (
+        <div
+          className="selection-actions"
+          style={{
+            left: `${Math.min(92, (rect.x / preview.width) * 100 + (rect.width / preview.width) * 100)}%`,
+            top: `${Math.min(92, (rect.y / preview.height) * 100 + (rect.height / preview.height) * 100)}%`,
+          }}
+        >
+          <button title="取消" onClick={() => getCurrentWindow().hide()}>
+            ×
+          </button>
+          <button title="重新划区" onClick={() => {
+            setStart(null);
+            setCurrent(null);
+            setLocalReady(false);
+          }}>
+            ↺
+          </button>
+          <button title="保存" onClick={confirm}>
+            ✓
+          </button>
+        </div>
+      )}
       <div className="overlay-toolbar">
-        {remoteSelection?.active ? "平板正在划定截图区域；确认后发送到平板" : "拖拽选择区域，松开后发送到平板；Esc 取消"}
+        {remoteSelection?.active ? "平板正在划定截图区域" : "拖拽选择区域"}
       </div>
     </div>
   );

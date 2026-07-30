@@ -29,8 +29,14 @@ object BridgeClient {
 
     private var socket: WebSocket? = null
     private var token: String? = null
+    private var savedUrl: String? = null
+    private var savedDeviceName: String = "小米平板"
+    @Volatile private var generation = 0
+    @Volatile private var reconnectScheduled = false
+    @Volatile private var pendingOutbound: String? = null
     private lateinit var appContext: Context
     private val io = Executors.newSingleThreadExecutor()
+    private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private val _state = MutableStateFlow(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = _state
 
@@ -38,23 +44,38 @@ object BridgeClient {
         appContext = context.applicationContext
     }
 
-    fun connectSaved() {
+    fun connectSaved(force: Boolean = false) {
         val saved = BridgePrefs(appContext).load() ?: return
         token = saved.token
+        savedUrl = saved.url
+        savedDeviceName = saved.deviceName
+        if (!force && socket != null && _state.value == ConnectionState.Connected) {
+            return
+        }
+        if (!force && _state.value == ConnectionState.Connecting) {
+            return
+        }
         connect(saved.url, null, saved.deviceName)
     }
 
     fun pair(url: String, code: String, deviceName: String) {
         token = null
+        savedUrl = url
+        savedDeviceName = deviceName
         connect(url, code, deviceName)
     }
 
     private fun connect(url: String, code: String?, deviceName: String) {
-        close()
+        generation += 1
+        val activeGeneration = generation
+        socket?.cancel()
+        socket = null
         _state.value = ConnectionState.Connecting
         val request = Request.Builder().url(url).build()
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (activeGeneration != generation) return
+                reconnectScheduled = false
                 _state.value = ConnectionState.Connected
                 if (code != null) {
                     val message = JSONObject()
@@ -68,18 +89,30 @@ object BridgeClient {
                         .put("token", token)
                     webSocket.send(message.toString())
                 }
+                pendingOutbound?.let {
+                    if (webSocket.send(it)) {
+                        pendingOutbound = null
+                    }
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (activeGeneration != generation) return
                 handleMessage(url, deviceName, text)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (activeGeneration != generation) return
+                socket = null
                 _state.value = ConnectionState.Failed
+                scheduleReconnect()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (activeGeneration != generation) return
+                socket = null
                 _state.value = ConnectionState.Disconnected
+                scheduleReconnect()
             }
         })
     }
@@ -90,6 +123,8 @@ object BridgeClient {
             "paired" -> {
                 val nextToken = json.getString("token")
                 token = nextToken
+                savedUrl = url
+                savedDeviceName = deviceName
                 BridgePrefs(appContext).save(url, nextToken, deviceName)
                 _state.value = ConnectionState.Connected
             }
@@ -121,7 +156,7 @@ object BridgeClient {
             .put("type", "command")
             .put("command", command)
             .put("token", activeToken)
-        socket?.send(message.toString())
+        sendOrQueue(message)
     }
 
     fun remoteSelection(
@@ -140,18 +175,44 @@ object BridgeClient {
             .put("y_ratio", yRatio.toDouble())
             .put("width_ratio", widthRatio.toDouble())
             .put("height_ratio", heightRatio.toDouble())
-        socket?.send(message.toString())
+        sendOrQueue(message)
     }
 
     fun sendPing() {
         val message = JSONObject()
             .put("type", "ping")
             .put("token", token)
-        socket?.send(message.toString())
+        sendOrQueue(message)
+    }
+
+    private fun sendOrQueue(message: JSONObject) {
+        val text = message.toString()
+        if (socket?.send(text) != true) {
+            pendingOutbound = text
+            connectSaved()
+        }
+    }
+
+    private fun scheduleReconnect() {
+        if (token == null || reconnectScheduled) return
+        val url = savedUrl ?: BridgePrefs(appContext).load()?.also {
+            savedUrl = it.url
+            savedDeviceName = it.deviceName
+        }?.url ?: return
+        reconnectScheduled = true
+        scheduler.schedule({
+            reconnectScheduled = false
+            if (_state.value == ConnectionState.Connected || _state.value == ConnectionState.Connecting) {
+                return@schedule
+            }
+            connect(url, null, savedDeviceName)
+        }, 1500, TimeUnit.MILLISECONDS)
     }
 
     fun close() {
+        generation += 1
         socket?.close(1000, "reconnect")
         socket = null
+        _state.value = ConnectionState.Disconnected
     }
 }

@@ -40,6 +40,42 @@ body {
   position: absolute;
 }
 
+.selection-actions {
+  align-items: center;
+  background: rgba(17, 24, 39, 0.9);
+  border-radius: 8px;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  position: absolute;
+  transform: translate(-100%, 10px);
+}
+
+.selection-actions button {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.14);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  font-size: 20px;
+  font-weight: 800;
+  height: 34px;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  width: 34px;
+}
+
+.selection-actions button:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.selection-actions button:last-child {
+  background: #16a34a;
+}
+
 .overlay-toolbar,
 .overlay-loading {
   align-items: center;

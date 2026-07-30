@@ -7,7 +7,8 @@ mod protocol;
 use bridge::{BridgeState, SharedBridge};
 use commands::{
     clear_devices, confirm_screenshot_selection, get_app_status, get_pending_preview,
-    open_screenshot_overlay, regenerate_pairing_code, send_media_command, start_bridge_server,
+    get_remote_selection, open_screenshot_overlay, regenerate_pairing_code, send_media_command,
+    start_bridge_server,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -53,6 +54,7 @@ pub fn run() {
             send_media_command,
             open_screenshot_overlay,
             get_pending_preview,
+            get_remote_selection,
             confirm_screenshot_selection
         ])
         .run(tauri::generate_context!())
