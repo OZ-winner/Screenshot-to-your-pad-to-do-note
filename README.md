@@ -16,6 +16,15 @@
 
 ## 快速使用
 
+### 发布版安装
+
+普通用户不需要安装开发环境。进入 GitHub Releases 下载同一版本的两个文件：
+
+- Windows 电脑端：`ScreenshotToPad-Windows-0.1.0-x64-setup.exe`
+- Android 平板端：`ScreenshotToPad-Android-0.1.0-debug.apk`
+
+安装后让电脑和平板连接同一个 Wi-Fi，先启动 Windows 端，再打开平板 App 扫码配对。首次使用需要在 Windows 防火墙中允许专用网络通信，并在平板系统设置里允许悬浮窗权限。
+
 ### 1. 启动 Windows 端
 
 在项目根目录运行：
