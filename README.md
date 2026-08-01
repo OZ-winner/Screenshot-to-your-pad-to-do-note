@@ -9,8 +9,11 @@
 
 - Windows 端显示配对二维码、配对码、局域网地址和已配对设备。
 - 平板端扫码配对，保存 token，后续可自动重连。
-- 平板悬浮窗使用图标按钮：区域截图、后退 5 秒、暂停/播放、快进 5 秒。
-- 平板点截图图标后会出现全屏选区层，拖出矩形区域，电脑端同步显示对应屏幕区域，点对勾后裁剪发送到平板相册。
+- 平板悬浮窗使用图标按钮：区域截图、快速截全屏、后退 5 秒、暂停/播放、快进 5 秒，并可收起成 1.5 倍大悬浮球。
+- 悬浮球只有靠近屏幕左右边缘时才会半掩吸附；吸附后仍可直接拖动，点一下可展开。
+- 悬浮球在左半屏向右展开，在右半屏向左展开；球体完全越过屏幕中线才切换方向，压住中线时沿用上一次方向。
+- 平板点区域截图图标后会出现全屏选区层，拖出矩形区域，电脑端同步显示对应屏幕区域，点对勾后裁剪发送到平板相册。
+- 平板触发远程选区时，Windows 端会先抓取原始像素并立即显示选区窗口，后台生成 JPEG 预览；最终发送到平板的图片仍是无损 PNG。
 - 选区层支持取消、重新划区、保存，交互接近微信截图的选择流程。
 - Windows 端 `Ctrl+Alt+A` 或主界面按钮会打开选区截图预览，松开鼠标后发送选区截图。
 - 图片写入安卓系统相册：`Pictures/PC Screenshots`。
@@ -19,17 +22,17 @@
 
 ### 发布版安装
 
-普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.0](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.0) 下载同一版本的两个文件：
+普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.1](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.1) 下载同一版本的两个文件：
 
-- Windows 电脑端：`ScreenshotToPad-Windows-0.1.0-x64-setup.exe`
-- Android 平板端：`ScreenshotToPad-Android-0.1.0-debug.apk`
+- Windows 电脑端：`ScreenshotToPad-Windows-0.1.1-x64-setup.exe`
+- Android 平板端：`ScreenshotToPad-Android-0.1.1-debug.apk`
 - 校验文件：`SHA256SUMS.txt`
 
 安装后让电脑和平板连接同一个 Wi-Fi，先启动 Windows 端，再打开平板 App 扫码配对。首次使用需要在 Windows 防火墙中允许专用网络通信，并在平板系统设置里允许悬浮窗权限。
 
 ### 1. 启动 Windows 端
 
-发布版用户双击安装 `ScreenshotToPad-Windows-0.1.0-x64-setup.exe`，安装完成后启动“截图直传”。
+发布版用户双击安装 `ScreenshotToPad-Windows-0.1.1-x64-setup.exe`，安装完成后启动“截图直传”。
 
 在项目根目录运行：
 
@@ -37,7 +40,7 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev-windows.ps1
 ```
 
-也可以双击项目里的 `截图直传 Windows端.lnk`，或运行 `创建桌面快捷方式.bat` 后使用桌面快捷方式。
+也可以运行项目里的 `启动截图直传-Windows端.bat`，或运行 `scripts\create-desktop-shortcut.ps1` 后使用桌面快捷方式。
 
 首次启动时，如果 Windows 防火墙弹窗，请允许专用网络通信。主界面会显示局域网地址、配对码和二维码。
 
@@ -69,9 +72,11 @@ android\app\build\outputs\apk\debug\app-debug.apk
 
 - 左侧 `≡` 手柄：按住拖动，可以移动整个悬浮窗。
 - 截图框图标：在平板上拖出长方形区域，电脑同步显示选区，点对勾后截图传到平板相册。
+- 全屏截图图标：不打开选区，直接截取电脑主屏并保存到平板相册。
 - 后退图标：让电脑当前视频后退 5 秒。
 - 暂停图标：暂停/播放当前视频。
 - 快进图标：让电脑当前视频快进 5 秒。
+- 收起图标：把遥控条收缩成悬浮球；悬浮球靠近左右边缘松手时半掩吸附，点一下可重新展开。
 
 也可以在平板 App 主界面点“截图”，会打开同一个选区截图流程。
 
@@ -103,7 +108,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.
 安装包输出位置：
 
 ```text
-src-tauri\target\release\bundle\nsis\截图直传_0.1.0_x64-setup.exe
+src-tauri\target\release\bundle\nsis\截图直传_0.1.1_x64-setup.exe
 ```
 
 ## Android 开发配置
@@ -245,6 +250,6 @@ File -> Settings -> Languages & Frameworks -> Android SDK
 ## V1 限制
 
 - 选区截图目前基于主屏截图预览，尚未做完整多显示器虚拟桌面选区。
-- 平板截图默认走远程选区流程；后续可以再加“一键全屏截图”开关。
+- 平板快速全屏截图和远程选区截图目前都基于 Windows 主显示器。
 - 视频控制通过模拟当前活动窗口快捷键实现，默认适配多数浏览器/播放器。
 - 如果 Windows 防火墙提示网络访问，需要允许专用网络通信。

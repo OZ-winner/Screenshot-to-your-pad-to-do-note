@@ -8,7 +8,8 @@ import "./overlay.css";
 type Preview = {
   width: number;
   height: number;
-  pngBase64: string;
+  mimeType: string;
+  imageBase64: string;
 };
 
 type Point = {
@@ -87,6 +88,7 @@ function Overlay() {
   useEffect(() => {
     let unlistenRemote: undefined | (() => void);
     let unlistenPreview: undefined | (() => void);
+    let unlistenPreviewReset: undefined | (() => void);
     const poll = window.setInterval(() => {
       if (!preview) {
         loadPreview();
@@ -107,19 +109,25 @@ function Overlay() {
       unlistenRemote = dispose;
     });
     listen("screenshot-preview-updated", () => {
+      loadPreview();
+    }).then((dispose) => {
+      unlistenPreview = dispose;
+    });
+    listen("screenshot-preview-reset", () => {
+      setPreview(null);
       setRemoteSelection(null);
       setStart(null);
       setCurrent(null);
       setIsDragging(false);
       setLocalReady(false);
-      loadPreview();
     }).then((dispose) => {
-      unlistenPreview = dispose;
+      unlistenPreviewReset = dispose;
     });
     return () => {
       window.clearInterval(poll);
       unlistenRemote?.();
       unlistenPreview?.();
+      unlistenPreviewReset?.();
     };
   }, [loadPreview, preview]);
 
@@ -149,7 +157,7 @@ function Overlay() {
       <img
         ref={imageRef}
         className="screen-preview"
-        src={`data:image/png;base64,${preview.pngBase64}`}
+        src={`data:${preview.mimeType};base64,${preview.imageBase64}`}
         draggable={false}
         onPointerDown={(event) => {
           if (remoteSelection?.active) {

@@ -2,19 +2,21 @@ $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent $PSScriptRoot
 $desktop = [Environment]::GetFolderPath("Desktop")
-$shortcutPath = Join-Path $desktop "截图直传 Windows端.lnk"
-$script = Join-Path $repo "scripts\dev-windows.ps1"
+$shortcutName = "$([char]0x542f)$([char]0x52a8)$([char]0x622a)$([char]0x56fe)$([char]0x76f4)$([char]0x4f20)-Windows$([char]0x7aef).lnk"
+$shortcutPath = Join-Path $desktop $shortcutName
+$launcher = Get-ChildItem -LiteralPath $repo -Filter "*Windows*.bat" |
+  Select-Object -First 1 -ExpandProperty FullName
 $icon = Join-Path $repo "src-tauri\icons\icon.ico"
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$script`""
+$shortcut.TargetPath = $launcher
+$shortcut.Arguments = ""
 $shortcut.WorkingDirectory = $repo
-$shortcut.Description = "启动截图直传 Windows 端"
+$shortcut.Description = "Start ScreenshotToPad Windows"
 if (Test-Path $icon) {
   $shortcut.IconLocation = $icon
 }
 $shortcut.Save()
 
-Write-Host "已创建桌面快捷方式：$shortcutPath"
+Write-Host "Created desktop shortcut: $shortcutPath"

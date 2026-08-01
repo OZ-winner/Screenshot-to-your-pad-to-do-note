@@ -38,6 +38,10 @@ pub fn run() {
                 eprintln!("global shortcut setup failed: {error}");
             }
 
+            if let Err(error) = commands::precreate_overlay_window(app.handle()) {
+                eprintln!("overlay precreate failed: {error}");
+            }
+
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let bridge = app_handle.state::<SharedBridge>().inner().clone();
@@ -102,7 +106,10 @@ fn setup_shortcut(app: &mut tauri::App) -> Result<(), String> {
     app.global_shortcut()
         .on_shortcut(shortcut, move |_app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
-                let _ = open_screenshot_overlay(app_handle.clone());
+                let app_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = open_screenshot_overlay(app_handle).await;
+                });
             }
         })
         .map_err(|error| error.to_string())?;

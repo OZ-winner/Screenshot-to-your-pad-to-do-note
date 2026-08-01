@@ -1,9 +1,10 @@
 use crate::{
-    capture::SelectionRatios,
+    capture::{PendingPreview, SelectionRatios},
     protocol::{AppStatus, PublicDevice, ServerMessage},
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use image::RgbaImage;
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -35,6 +36,7 @@ pub struct BridgeState {
     pub screenshot_tx: broadcast::Sender<ServerMessage>,
     pub pending_capture: Option<PendingCapture>,
     pub remote_selection: Option<SelectionRatios>,
+    pub capture_sequence: u64,
 }
 
 impl Default for BridgeState {
@@ -49,15 +51,18 @@ impl Default for BridgeState {
             screenshot_tx,
             pending_capture: None,
             remote_selection: None,
+            capture_sequence: 0,
         }
     }
 }
 
 #[derive(Clone)]
 pub struct PendingCapture {
-    pub png: Vec<u8>,
+    pub id: u64,
+    pub pixels: Arc<RgbaImage>,
     pub width: u32,
     pub height: u32,
+    pub preview: Option<PendingPreview>,
 }
 
 impl BridgeState {

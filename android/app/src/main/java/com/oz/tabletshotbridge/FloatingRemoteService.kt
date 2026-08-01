@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -19,12 +20,18 @@ import androidx.core.view.setPadding
 class FloatingRemoteService : Service() {
     companion object {
         const val ACTION_START_SELECTION = "com.oz.tabletshotbridge.START_SELECTION"
+        private const val FLOATING_BALL_SIZE = 108
+        private const val FLOATING_BALL_EDGE_SLOP = 12
+        private const val FLOATING_INITIAL_X = 60
+        private const val FLOATING_INITIAL_Y = 160
     }
 
     private lateinit var windowManager: WindowManager
-    private var panel: LinearLayout? = null
+    private var panel: View? = null
     private var selectionOverlay: FrameLayout? = null
     private var params: WindowManager.LayoutParams? = null
+    private var floatingState = FloatingState.ExpandedRight
+    private var lastExpandDirection = ExpandDirection.Right
 
     override fun onCreate() {
         super.onCreate()
@@ -48,7 +55,7 @@ class FloatingRemoteService : Service() {
             windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         }
         if (panel == null) {
-            showPanel()
+            showExpandedPanel()
         }
         if (intent?.action == ACTION_START_SELECTION) {
             BridgeClient.connectSaved()
@@ -65,18 +72,55 @@ class FloatingRemoteService : Service() {
         super.onDestroy()
     }
 
-    private fun showPanel() {
+    private fun showExpandedPanel(
+        startX: Int = FLOATING_INITIAL_X,
+        startY: Int = FLOATING_INITIAL_Y,
+        expandDirection: ExpandDirection = ExpandDirection.Right,
+        revealAfterPosition: Boolean = false,
+    ) {
         val gripView = grip()
-        val view = LinearLayout(this).apply {
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(8)
             background = roundedBackground()
-            addView(gripView)
-            addView(iconButton(R.drawable.ic_screenshot_area, "截图") { showSelectionOverlay() })
-            addView(iconButton(R.drawable.ic_rewind, "后退 5 秒") { BridgeClient.command("seek_back_5") })
-            addView(iconButton(R.drawable.ic_pause, "暂停播放") { BridgeClient.command("play_pause") })
-            addView(iconButton(R.drawable.ic_fast_forward, "快进 5 秒") { BridgeClient.command("seek_forward_5") })
+            elevation = 12f
+            val collapseIcon = if (expandDirection == ExpandDirection.Right) {
+                R.drawable.ic_collapse
+            } else {
+                R.drawable.ic_collapse_right
+            }
+            val buttons = listOf(
+                iconButton(R.drawable.ic_screenshot_area, "选择截图区域") { showSelectionOverlay() },
+                iconButton(R.drawable.ic_screenshot_fullscreen, "快速截全屏") {
+                    BridgeClient.command("screenshot")
+                },
+                iconButton(R.drawable.ic_rewind, "后退 5 秒") { BridgeClient.command("seek_back_5") },
+                iconButton(R.drawable.ic_pause, "暂停播放") { BridgeClient.command("play_pause") },
+                iconButton(R.drawable.ic_fast_forward, "快进 5 秒") { BridgeClient.command("seek_forward_5") },
+                iconButton(collapseIcon, "收起为悬浮球") { collapseToBall() },
+            )
+            if (expandDirection == ExpandDirection.Right) {
+                addView(gripView)
+                buttons.forEach { addView(it) }
+            } else {
+                buttons.asReversed().forEach { addView(it) }
+                addView(gripView)
+            }
+        }
+        val view = FrameLayout(this).apply {
+            clipChildren = false
+            clipToPadding = false
+            if (revealAfterPosition) {
+                alpha = 0f
+            }
+            addView(
+                content,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                ),
+            )
         }
 
         val layoutParams = WindowManager.LayoutParams(
@@ -87,18 +131,272 @@ class FloatingRemoteService : Service() {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 60
-            y = 160
+            x = startX
+            y = startY
         }
 
         attachDrag(gripView, view, layoutParams)
+        removeFloatingControl()
         panel = view
         params = layoutParams
+        floatingState = if (expandDirection == ExpandDirection.Right) {
+            FloatingState.ExpandedRight
+        } else {
+            FloatingState.ExpandedLeft
+        }
+        lastExpandDirection = expandDirection
         windowManager.addView(view, layoutParams)
+        view.post {
+            positionExpandedPanel(view, layoutParams, startX, startY, expandDirection)
+            if (revealAfterPosition) {
+                view.animate()
+                    .alpha(1f)
+                    .setDuration(90L)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .start()
+            }
+        }
+    }
+
+    private fun showFloatingBall(startX: Int, startY: Int, animateIn: Boolean = false) {
+        removeFloatingControl()
+        val placement = floatingBallPlacement(startX, startY)
+        val view = FrameLayout(this).apply {
+            contentDescription = "展开遥控器"
+            clipChildren = false
+            clipToPadding = false
+            addView(
+                floatingBallView().apply {
+                    translationX = placement.visualOffset
+                },
+                FrameLayout.LayoutParams(FLOATING_BALL_SIZE, FLOATING_BALL_SIZE),
+            )
+            setOnClickListener { expandFromBall() }
+            if (animateIn) {
+                alpha = 0f
+                scaleX = 0.62f
+                scaleY = 0.62f
+            }
+        }
+        val layoutParams = WindowManager.LayoutParams(
+            FLOATING_BALL_SIZE,
+            FLOATING_BALL_SIZE,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = placement.x
+            y = placement.y
+        }
+
+        attachDrag(view, view, layoutParams, triggerClickOnTap = true, useFloatingBallDocking = true)
+        windowManager.addView(view, layoutParams)
+        panel = view
+        params = layoutParams
+        floatingState = FloatingState.Ball
+        if (animateIn) {
+            view.post {
+                animateFloatingBallIn(view, 140L)
+            }
+        }
+    }
+
+    private fun floatingBallView(): ImageButton {
+        return ImageButton(this).apply {
+            contentDescription = "展开遥控器"
+            setImageResource(R.drawable.ic_screenshot_area)
+            setColorFilter(0xffffffff.toInt())
+            background = roundedBackground(0xcc16a34a.toInt(), FLOATING_BALL_SIZE / 2f, oval = true)
+            elevation = 14f
+            minimumWidth = FLOATING_BALL_SIZE
+            minimumHeight = FLOATING_BALL_SIZE
+            setPadding(27)
+            isClickable = false
+            isFocusable = false
+        }
+    }
+
+    private fun animateFloatingBallIn(view: View, duration: Long) {
+        view.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(duration)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.8f))
+            .withEndAction {
+                view.setLayerType(View.LAYER_TYPE_NONE, null)
+            }
+            .start()
+    }
+
+    private fun collapseToBall() {
+        if (floatingState == FloatingState.CollapsingToBall) {
+            return
+        }
+        val currentView = panel ?: return
+        val currentParams = params ?: return
+        val root = currentView as? FrameLayout ?: return
+        val content = root.getChildAt(0) as? LinearLayout ?: return
+        val gripView = findGrip(content)
+        val pivotInContentX = gripView.left + gripView.width / 2f
+        val pivotInContentY = gripView.top + gripView.height / 2f
+        val pivotX = content.left + pivotInContentX
+        val pivotY = content.top + pivotInContentY
+        val desiredBallX = currentParams.x + pivotX.toInt() - (FLOATING_BALL_SIZE / 2)
+        val desiredBallY = currentParams.y + pivotY.toInt() - (FLOATING_BALL_SIZE / 2)
+        val placement = floatingBallPlacement(desiredBallX, desiredBallY)
+        val ballLeft = placement.x - currentParams.x
+        val ballTop = placement.y - currentParams.y
+
+        if (currentView.width <= 0 || currentView.height <= 0) {
+            showFloatingBall(desiredBallX, desiredBallY, animateIn = true)
+            return
+        }
+
+        floatingState = FloatingState.CollapsingToBall
+        val ballView = floatingBallView().apply {
+            alpha = 0f
+            scaleX = 0.62f
+            scaleY = 0.62f
+            translationX = placement.visualOffset
+        }
+        root.addView(
+            ballView,
+            FrameLayout.LayoutParams(FLOATING_BALL_SIZE, FLOATING_BALL_SIZE).apply {
+                leftMargin = ballLeft
+                topMargin = ballTop
+            },
+        )
+
+        content.pivotX = pivotInContentX
+        content.pivotY = pivotInContentY
+        content.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        ballView.post {
+            ballView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            animateFloatingBallIn(ballView, 180L)
+        }
+
+        content.animate()
+            .alpha(0f)
+            .scaleX(0.08f)
+            .scaleY(0.08f)
+            .setDuration(190L)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .withEndAction {
+                finishCollapsedBall(root, content, ballView, placement)
+            }
+            .start()
+    }
+
+    private fun finishCollapsedBall(
+        root: FrameLayout,
+        content: LinearLayout,
+        ballView: View,
+        placement: FloatingBallPlacement,
+    ) {
+        ballView.animate().cancel()
+        ballView.alpha = 1f
+        ballView.scaleX = 1f
+        ballView.scaleY = 1f
+        ballView.translationX = placement.visualOffset
+
+        val (finalBall, finalParams) = addFinalFloatingBall(placement)
+        panel = finalBall
+        params = finalParams
+        floatingState = FloatingState.Ball
+        content.setLayerType(View.LAYER_TYPE_NONE, null)
+        ballView.setLayerType(View.LAYER_TYPE_NONE, null)
+        root.postOnAnimation {
+            try {
+                windowManager.removeView(root)
+            } catch (_: IllegalArgumentException) {
+                // The old expanded window can already be gone if the service is restarted.
+            }
+        }
+    }
+
+    private fun addFinalFloatingBall(placement: FloatingBallPlacement): Pair<View, WindowManager.LayoutParams> {
+        val view = FrameLayout(this).apply {
+            contentDescription = "展开遥控器"
+            clipChildren = false
+            clipToPadding = false
+            addView(
+                floatingBallView().apply {
+                    translationX = placement.visualOffset
+                },
+                FrameLayout.LayoutParams(FLOATING_BALL_SIZE, FLOATING_BALL_SIZE),
+            )
+            setOnClickListener { expandFromBall() }
+        }
+        val layoutParams = WindowManager.LayoutParams(
+            FLOATING_BALL_SIZE,
+            FLOATING_BALL_SIZE,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = placement.x
+            y = placement.y
+        }
+        attachDrag(view, view, layoutParams, triggerClickOnTap = true, useFloatingBallDocking = true)
+        windowManager.addView(view, layoutParams)
+        return view to layoutParams
+    }
+
+    private fun expandFromBall() {
+        if (floatingState != FloatingState.Ball) {
+            return
+        }
+        val currentParams = params ?: return
+        val startX = currentParams.x
+        val startY = currentParams.y
+        val direction = expandDirectionForBall(startX)
+        lastExpandDirection = direction
+        showExpandedPanel(startX, startY, direction, revealAfterPosition = true)
+    }
+
+    private fun removeFloatingControl() {
+        panel?.let { windowManager.removeView(it) }
+        panel = null
+        params = null
+    }
+
+    private fun positionExpandedPanel(
+        target: View,
+        layoutParams: WindowManager.LayoutParams,
+        anchorX: Int,
+        anchorY: Int,
+        expandDirection: ExpandDirection,
+    ) {
+        val bounds = screenBoundsFor(target)
+        val content = (target as? FrameLayout)?.getChildAt(0) as? LinearLayout
+        val gripView = content?.let { findGrip(it) }
+        val gripCenterX = ((content?.left ?: 0) + (gripView?.left ?: 0)) +
+            ((gripView?.width ?: FLOATING_BALL_SIZE) / 2)
+        val gripCenterY = ((content?.top ?: 0) + (gripView?.top ?: 0)) +
+            ((gripView?.height ?: FLOATING_BALL_SIZE) / 2)
+        val anchorCenterX = anchorX + (FLOATING_BALL_SIZE / 2)
+        val anchorCenterY = anchorY + (FLOATING_BALL_SIZE / 2)
+        layoutParams.x = (anchorCenterX - gripCenterX).coerceIn(0, bounds.maxX)
+        layoutParams.y = (anchorCenterY - gripCenterY).coerceIn(0, bounds.maxY)
+        windowManager.updateViewLayout(target, layoutParams)
+    }
+
+    private fun expandDirectionForBall(ballX: Int): ExpandDirection {
+        val centerLine = resources.displayMetrics.widthPixels / 2
+        val ballRight = ballX + FLOATING_BALL_SIZE
+        return when {
+            ballRight < centerLine -> ExpandDirection.Right
+            ballX > centerLine -> ExpandDirection.Left
+            else -> lastExpandDirection
+        }
     }
 
     private fun grip(): TextView {
         return TextView(this).apply {
+            tag = "floating_grip"
             text = "≡"
             textSize = 20f
             setTextColor(0xffffffff.toInt())
@@ -107,6 +405,16 @@ class FloatingRemoteService : Service() {
             gravity = Gravity.CENTER
             setPadding(12)
         }
+    }
+
+    private fun findGrip(content: LinearLayout): View {
+        for (index in 0 until content.childCount) {
+            val child = content.getChildAt(index)
+            if (child.tag == "floating_grip") {
+                return child
+            }
+        }
+        return content.getChildAt(0)
     }
 
     private fun showSelectionOverlay() {
@@ -313,11 +621,15 @@ class FloatingRemoteService : Service() {
         dragHandle: View,
         target: View,
         layoutParams: WindowManager.LayoutParams,
+        triggerClickOnTap: Boolean = false,
+        useFloatingBallDocking: Boolean = false,
     ) {
         var startX = 0
         var startY = 0
         var downX = 0f
         var downY = 0f
+        var hasDragged = false
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
 
         dragHandle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -326,30 +638,119 @@ class FloatingRemoteService : Service() {
                     startY = layoutParams.y
                     downX = event.rawX
                     downY = event.rawY
+                    hasDragged = false
+                    if (useFloatingBallDocking) {
+                        setFloatingBallVisualOffset(target, 0f)
+                    }
                     true
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    val displayWidth = resources.displayMetrics.widthPixels
-                    val displayHeight = resources.displayMetrics.heightPixels
-                    val maxX = (displayWidth - target.width).coerceAtLeast(0)
-                    val maxY = (displayHeight - target.height).coerceAtLeast(0)
-                    layoutParams.x = (startX + (event.rawX - downX).toInt()).coerceIn(0, maxX)
-                    layoutParams.y = (startY + (event.rawY - downY).toInt()).coerceIn(0, maxY)
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (!hasDragged && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
+                        hasDragged = true
+                    }
+                    val bounds = screenBoundsFor(target)
+                    layoutParams.x = (startX + dx.toInt()).coerceIn(0, bounds.maxX)
+                    layoutParams.y = (startY + dy.toInt()).coerceIn(0, bounds.maxY)
+                    if (useFloatingBallDocking) {
+                        setFloatingBallVisualOffset(target, 0f)
+                    }
                     windowManager.updateViewLayout(target, layoutParams)
                     true
                 }
 
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> true
+                MotionEvent.ACTION_UP -> {
+                    if (triggerClickOnTap && !hasDragged) {
+                        target.performClick()
+                    } else if (useFloatingBallDocking) {
+                        settleFloatingBall(target, layoutParams)
+                    } else {
+                        keepInsideScreen(target, layoutParams)
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    if (useFloatingBallDocking) {
+                        settleFloatingBall(target, layoutParams)
+                    } else {
+                        keepInsideScreen(target, layoutParams)
+                    }
+                    true
+                }
                 else -> true
             }
         }
     }
 
+    private fun keepInsideScreen(target: View, layoutParams: WindowManager.LayoutParams) {
+        val bounds = screenBoundsFor(target)
+        layoutParams.x = layoutParams.x.coerceIn(0, bounds.maxX)
+        layoutParams.y = layoutParams.y.coerceIn(0, bounds.maxY)
+        windowManager.updateViewLayout(target, layoutParams)
+    }
+
+    private fun floatingBallPlacement(startX: Int, startY: Int): FloatingBallPlacement {
+        val displayWidth = resources.displayMetrics.widthPixels
+        val displayHeight = resources.displayMetrics.heightPixels
+        val maxX = (displayWidth - FLOATING_BALL_SIZE).coerceAtLeast(0)
+        val maxY = (displayHeight - FLOATING_BALL_SIZE).coerceAtLeast(0)
+        val halfHiddenOffset = FLOATING_BALL_SIZE / 2
+        val distanceToRight = displayWidth - (startX + FLOATING_BALL_SIZE)
+
+        return when {
+            startX <= FLOATING_BALL_EDGE_SLOP -> FloatingBallPlacement(
+                x = 0,
+                y = startY.coerceIn(0, maxY),
+                visualOffset = -halfHiddenOffset.toFloat(),
+            )
+            distanceToRight <= FLOATING_BALL_EDGE_SLOP -> FloatingBallPlacement(
+                x = maxX,
+                y = startY.coerceIn(0, maxY),
+                visualOffset = halfHiddenOffset.toFloat(),
+            )
+            else -> FloatingBallPlacement(
+                x = startX.coerceIn(0, maxX),
+                y = startY.coerceIn(0, maxY),
+                visualOffset = 0f,
+            )
+        }
+    }
+
+    private fun settleFloatingBall(target: View, layoutParams: WindowManager.LayoutParams) {
+        val placement = floatingBallPlacement(layoutParams.x, layoutParams.y)
+        layoutParams.x = placement.x
+        layoutParams.y = placement.y
+        setFloatingBallVisualOffset(target, placement.visualOffset)
+        windowManager.updateViewLayout(target, layoutParams)
+    }
+
+    private fun setFloatingBallVisualOffset(target: View, offset: Float) {
+        (target as? FrameLayout)?.getChildAt(0)?.translationX = offset
+    }
+
+    private fun screenBoundsFor(target: View): ScreenBounds {
+        val displayWidth = resources.displayMetrics.widthPixels
+        val displayHeight = resources.displayMetrics.heightPixels
+        val targetWidth = target.width.takeIf { it > 0 } ?: FLOATING_BALL_SIZE
+        val targetHeight = target.height.takeIf { it > 0 } ?: FLOATING_BALL_SIZE
+        return ScreenBounds(
+            displayWidth = displayWidth,
+            maxX = (displayWidth - targetWidth).coerceAtLeast(0),
+            maxY = (displayHeight - targetHeight).coerceAtLeast(0),
+        )
+    }
+
     private fun roundedBackground(
         color: Int = 0xcc111827.toInt(),
         radius: Float = 18f,
+        oval: Boolean = false,
     ) = GradientDrawable().apply {
+        if (oval) {
+            shape = GradientDrawable.OVAL
+        }
         cornerRadius = radius
         setColor(color)
     }
@@ -360,4 +761,20 @@ class FloatingRemoteService : Service() {
     }
 
     private data class Quad(val x: Int, val y: Int, val width: Int, val height: Int)
+
+    private data class ScreenBounds(val displayWidth: Int, val maxX: Int, val maxY: Int)
+
+    private data class FloatingBallPlacement(val x: Int, val y: Int, val visualOffset: Float)
+
+    private enum class ExpandDirection {
+        Right,
+        Left,
+    }
+
+    private enum class FloatingState {
+        ExpandedRight,
+        ExpandedLeft,
+        CollapsingToBall,
+        Ball,
+    }
 }
