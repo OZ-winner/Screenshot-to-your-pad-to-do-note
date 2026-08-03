@@ -196,7 +196,7 @@ async fn handle_client_message(
 
             match payload.command {
                 RemoteCommand::Screenshot => {
-                    broadcast_full_screenshot(state).await?;
+                    broadcast_full_screenshot(app, state).await?;
                     Ok(Some(ServerMessage::Status {
                         status: BridgeStatus::Saved,
                         message: "screenshot captured".to_string(),
@@ -235,7 +235,7 @@ async fn handle_client_message(
     }
 }
 
-async fn broadcast_full_screenshot(state: &SharedBridge) -> Result<()> {
+async fn broadcast_full_screenshot(app: &AppHandle, state: &SharedBridge) -> Result<()> {
     let (png, width, height) = capture_primary_png()?;
     let artifact = build_screenshot_message(png, width, height)?;
     let tx = state
@@ -244,6 +244,7 @@ async fn broadcast_full_screenshot(state: &SharedBridge) -> Result<()> {
         .screenshot_tx
         .clone();
     let _ = tx.send(artifact.message);
+    let _ = app.emit("screenshot-sent", "全屏截图已发送到平板");
     Ok(())
 }
 
@@ -517,5 +518,6 @@ async fn finish_screenshot_selection(
         .screenshot_tx
         .clone();
     let _ = tx.send(artifact.message);
+    let _ = app.emit("screenshot-sent", "截图已发送到平板");
     Ok(())
 }

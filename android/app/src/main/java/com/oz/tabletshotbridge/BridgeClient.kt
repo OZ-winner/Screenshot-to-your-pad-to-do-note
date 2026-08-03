@@ -1,6 +1,9 @@
 package com.oz.tabletshotbridge
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
@@ -141,6 +144,11 @@ object BridgeClient {
                         expectedSha256 = sha256,
                     )
                     _state.value = if (ok) ConnectionState.Saved else ConnectionState.Failed
+                    if (ok) {
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(appContext, "截图已保存到平板", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
             }
 

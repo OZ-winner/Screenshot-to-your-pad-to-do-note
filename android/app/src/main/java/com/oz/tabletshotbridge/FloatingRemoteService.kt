@@ -104,7 +104,9 @@ class FloatingRemoteService : Service() {
                 addView(gripView)
                 buttons.forEach { addView(it) }
             } else {
-                buttons.asReversed().forEach { addView(it) }
+                // Keep rewind left of fast-forward in screen order on either side.
+                addView(buttons.last())
+                buttons.dropLast(1).forEach { addView(it) }
                 addView(gripView)
             }
         }

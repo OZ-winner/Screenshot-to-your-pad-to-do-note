@@ -39,7 +39,9 @@ pub enum RemoteSelectionPhase {
 pub enum RemoteCommand {
     Screenshot,
     PlayPause,
+    #[serde(rename = "seek_back_5")]
     SeekBack5,
+    #[serde(rename = "seek_forward_5")]
     SeekForward5,
 }
 
@@ -109,4 +111,30 @@ pub struct AppStatus {
     pub pairing_url: String,
     pub connected_clients: usize,
     pub paired_devices: Vec<PublicDevice>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClientMessage, RemoteCommand};
+
+    #[test]
+    fn parses_seek_commands_used_by_the_android_client() {
+        let backward: ClientMessage = serde_json::from_str(
+            r#"{"type":"command","command":"seek_back_5","token":"test"}"#,
+        )
+        .expect("backward command should parse");
+        let forward: ClientMessage = serde_json::from_str(
+            r#"{"type":"command","command":"seek_forward_5","token":"test"}"#,
+        )
+        .expect("forward command should parse");
+
+        assert!(matches!(
+            backward,
+            ClientMessage::Command(command) if matches!(command.command, RemoteCommand::SeekBack5)
+        ));
+        assert!(matches!(
+            forward,
+            ClientMessage::Command(command) if matches!(command.command, RemoteCommand::SeekForward5)
+        ));
+    }
 }

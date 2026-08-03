@@ -36,6 +36,7 @@ function App() {
   const [status, setStatus] = useState<AppStatus>(defaultStatus);
   const [qr, setQr] = useState("");
   const [message, setMessage] = useState("正在启动局域网服务...");
+  const [screenshotNotice, setScreenshotNotice] = useState("");
 
   const pairingPayload = useMemo(() => {
     return JSON.stringify({
@@ -83,9 +84,17 @@ function App() {
     listen("bridge-status", () => refreshStatus().catch(() => undefined)).then((dispose) => {
       unlisten = dispose;
     });
+    let unlistenScreenshot: undefined | (() => void);
+    listen<string>("screenshot-sent", (event) => {
+      setScreenshotNotice(event.payload);
+      window.setTimeout(() => setScreenshotNotice(""), 3000);
+    }).then((dispose) => {
+      unlistenScreenshot = dispose;
+    });
     return () => {
       window.clearInterval(timer);
       unlisten?.();
+      unlistenScreenshot?.();
     };
   }, []);
 
@@ -102,7 +111,7 @@ function App() {
       <section className="topbar">
         <div>
           <h1>截图直传</h1>
-          <p>{message}</p>
+          <p>{screenshotNotice || message}</p>
         </div>
         <div className="status-pill" data-state={status.serverRunning ? "on" : "off"}>
           <Wifi size={18} />
