@@ -17,14 +17,6 @@ type Point = {
   y: number;
 };
 
-type RemoteSelection = {
-  active: boolean;
-  xRatio: number;
-  yRatio: number;
-  widthRatio: number;
-  heightRatio: number;
-};
-
 function normalize(start: Point, end: Point) {
   return {
     x: Math.min(start.x, end.x),
@@ -40,32 +32,22 @@ function Overlay() {
   const [current, setCurrent] = useState<Point | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [localReady, setLocalReady] = useState(false);
-  const [remoteSelection, setRemoteSelection] = useState<RemoteSelection | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
   const rect = start && current ? normalize(start, current) : null;
-  const activeRect = remoteSelection?.active
+  const activeRect = rect && preview
     ? {
-        left: `${remoteSelection.xRatio * 100}%`,
-        top: `${remoteSelection.yRatio * 100}%`,
-        width: `${remoteSelection.widthRatio * 100}%`,
-        height: `${remoteSelection.heightRatio * 100}%`,
+        left: `${(rect.x / preview.width) * 100}%`,
+        top: `${(rect.y / preview.height) * 100}%`,
+        width: `${(rect.width / preview.width) * 100}%`,
+        height: `${(rect.height / preview.height) * 100}%`,
       }
-    : rect && preview
-      ? {
-          left: `${(rect.x / preview.width) * 100}%`,
-          top: `${(rect.y / preview.height) * 100}%`,
-          width: `${(rect.width / preview.width) * 100}%`,
-          height: `${(rect.height / preview.height) * 100}%`,
-        }
-      : null;
+    : null;
 
   const loadPreview = useCallback(async () => {
     try {
       const nextPreview = await invoke<Preview>("get_pending_preview");
-      const nextRemote = await invoke<RemoteSelection | null>("get_remote_selection");
       setPreview(nextPreview);
-      setRemoteSelection(nextRemote?.active ? nextRemote : null);
     } catch {
       setPreview(null);
     }
@@ -86,28 +68,13 @@ function Overlay() {
   }, [loadPreview, rect]);
 
   useEffect(() => {
-    let unlistenRemote: undefined | (() => void);
     let unlistenPreview: undefined | (() => void);
     let unlistenPreviewReset: undefined | (() => void);
     const poll = window.setInterval(() => {
       if (!preview) {
         loadPreview();
       }
-      invoke<RemoteSelection | null>("get_remote_selection")
-        .then((selection) => {
-          setRemoteSelection(selection?.active ? selection : null);
-        })
-        .catch(() => undefined);
     }, 100);
-    listen<RemoteSelection>("remote-selection", (event) => {
-      setStart(null);
-      setCurrent(null);
-      setIsDragging(false);
-      setLocalReady(false);
-      setRemoteSelection(event.payload.active ? event.payload : null);
-    }).then((dispose) => {
-      unlistenRemote = dispose;
-    });
     listen("screenshot-preview-updated", () => {
       loadPreview();
     }).then((dispose) => {
@@ -115,7 +82,6 @@ function Overlay() {
     });
     listen("screenshot-preview-reset", () => {
       setPreview(null);
-      setRemoteSelection(null);
       setStart(null);
       setCurrent(null);
       setIsDragging(false);
@@ -125,7 +91,6 @@ function Overlay() {
     });
     return () => {
       window.clearInterval(poll);
-      unlistenRemote?.();
       unlistenPreview?.();
       unlistenPreviewReset?.();
     };
@@ -160,9 +125,6 @@ function Overlay() {
         src={`data:${preview.mimeType};base64,${preview.imageBase64}`}
         draggable={false}
         onPointerDown={(event) => {
-          if (remoteSelection?.active) {
-            return;
-          }
           const point = pointFromEvent(event);
           setStart(point);
           setCurrent(point);
@@ -170,19 +132,19 @@ function Overlay() {
           setLocalReady(false);
         }}
         onPointerMove={(event) => {
-          if (start && isDragging && !remoteSelection?.active) {
+          if (start && isDragging) {
             setCurrent(pointFromEvent(event));
           }
         }}
         onPointerUp={() => {
-          if (rect && rect.width > 4 && rect.height > 4 && !remoteSelection?.active) {
+          if (rect && rect.width > 4 && rect.height > 4) {
             setLocalReady(true);
           }
           setIsDragging(false);
         }}
       />
       {activeRect && <div className="selection" style={activeRect} />}
-      {rect && localReady && !remoteSelection?.active && (
+      {rect && localReady && (
         <div
           className="selection-actions"
           style={{
@@ -205,9 +167,7 @@ function Overlay() {
           </button>
         </div>
       )}
-      <div className="overlay-toolbar">
-        {remoteSelection?.active ? "平板正在划定截图区域" : "拖拽选择区域"}
-      </div>
+      <div className="overlay-toolbar">拖拽选择区域</div>
     </div>
   );
 }

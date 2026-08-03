@@ -20,6 +20,13 @@ type AppStatus = {
   pairingUrl: string;
   connectedClients: number;
   pairedDevices: Device[];
+  captureNotice: CaptureNotice | null;
+};
+
+type CaptureNotice = {
+  revision: number;
+  phase: "processing" | "success" | "failed";
+  message: string;
 };
 
 const defaultStatus: AppStatus = {
@@ -30,13 +37,14 @@ const defaultStatus: AppStatus = {
   pairingUrl: "",
   connectedClients: 0,
   pairedDevices: [],
+  captureNotice: null,
 };
 
 function App() {
   const [status, setStatus] = useState<AppStatus>(defaultStatus);
   const [qr, setQr] = useState("");
   const [message, setMessage] = useState("正在启动局域网服务...");
-  const [screenshotNotice, setScreenshotNotice] = useState("");
+  const [captureNotice, setCaptureNotice] = useState<CaptureNotice | null>(null);
 
   const pairingPayload = useMemo(() => {
     return JSON.stringify({
@@ -49,6 +57,7 @@ function App() {
   async function refreshStatus() {
     const next = await invoke<AppStatus>("get_app_status");
     setStatus(next);
+    setCaptureNotice(next.captureNotice);
     setMessage(next.serverRunning ? "服务已启动，平板扫码后即可连接。" : "服务尚未启动。");
   }
 
@@ -84,17 +93,23 @@ function App() {
     listen("bridge-status", () => refreshStatus().catch(() => undefined)).then((dispose) => {
       unlisten = dispose;
     });
-    let unlistenScreenshot: undefined | (() => void);
-    listen<string>("screenshot-sent", (event) => {
-      setScreenshotNotice(event.payload);
-      window.setTimeout(() => setScreenshotNotice(""), 3000);
+    let unlistenCapture: undefined | (() => void);
+    let unlistenCaptureCleared: undefined | (() => void);
+    listen<CaptureNotice>("capture-notice", (event) => {
+      setCaptureNotice(event.payload);
     }).then((dispose) => {
-      unlistenScreenshot = dispose;
+      unlistenCapture = dispose;
+    });
+    listen<number>("capture-notice-cleared", (event) => {
+      setCaptureNotice((current) => current?.revision === event.payload ? null : current);
+    }).then((dispose) => {
+      unlistenCaptureCleared = dispose;
     });
     return () => {
       window.clearInterval(timer);
       unlisten?.();
-      unlistenScreenshot?.();
+      unlistenCapture?.();
+      unlistenCaptureCleared?.();
     };
   }, []);
 
@@ -111,7 +126,7 @@ function App() {
       <section className="topbar">
         <div>
           <h1>截图直传</h1>
-          <p>{screenshotNotice || message}</p>
+          <p data-capture-phase={captureNotice?.phase}>{captureNotice?.message || message}</p>
         </div>
         <div className="status-pill" data-state={status.serverRunning ? "on" : "off"}>
           <Wifi size={18} />

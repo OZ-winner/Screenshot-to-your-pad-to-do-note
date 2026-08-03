@@ -7,7 +7,7 @@ mod protocol;
 use bridge::{BridgeState, SharedBridge};
 use commands::{
     clear_devices, confirm_screenshot_selection, get_app_status, get_pending_preview,
-    get_remote_selection, open_screenshot_overlay, regenerate_pairing_code, send_media_command,
+    open_screenshot_overlay, precreate_remote_windows, regenerate_pairing_code, send_media_command,
     start_bridge_server,
 };
 use std::sync::{Arc, Mutex};
@@ -23,6 +23,14 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(Arc::new(Mutex::new(BridgeState::default())))
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             {
                 let bridge = app.state::<SharedBridge>().inner().clone();
@@ -38,8 +46,8 @@ pub fn run() {
                 eprintln!("global shortcut setup failed: {error}");
             }
 
-            if let Err(error) = commands::precreate_overlay_window(app.handle()) {
-                eprintln!("overlay precreate failed: {error}");
+            if let Err(error) = precreate_remote_windows(app.handle()) {
+                eprintln!("capture window precreate failed: {error}");
             }
 
             let app_handle = app.handle().clone();
@@ -58,7 +66,6 @@ pub fn run() {
             send_media_command,
             open_screenshot_overlay,
             get_pending_preview,
-            get_remote_selection,
             confirm_screenshot_selection
         ])
         .run(tauri::generate_context!())

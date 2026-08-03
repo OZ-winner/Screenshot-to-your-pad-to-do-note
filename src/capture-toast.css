@@ -1,0 +1,60 @@
+:root,
+body {
+  background: transparent;
+  font-family: "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+#capture-toast {
+  align-items: center;
+  background: rgba(17, 24, 39, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  color: #fff;
+  display: flex;
+  font-size: 15px;
+  font-weight: 700;
+  gap: 12px;
+  height: 56px;
+  padding: 0 18px;
+  width: 360px;
+}
+
+.indicator {
+  background: #60a5fa;
+  border-radius: 50%;
+  height: 12px;
+  width: 12px;
+}
+
+[data-phase="processing"] .indicator {
+  animation: pulse 0.9s ease-in-out infinite alternate;
+}
+
+[data-phase="success"] .indicator {
+  background: #22c55e;
+}
+
+[data-phase="failed"] .indicator {
+  background: #ef4444;
+}
+
+.message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes pulse {
+  from { opacity: 0.42; transform: scale(0.82); }
+  to { opacity: 1; transform: scale(1); }
+}

@@ -49,7 +49,7 @@ Commands:
 
 ## Remote Selection Screenshot
 
-The tablet can drive a rectangular selection using normalized coordinates. The Windows side shows the selection on top of the current screen capture while the user drags on the tablet. `confirm` crops the pending capture and broadcasts it as a normal `screenshot` message.
+The tablet can drive a rectangular selection using normalized coordinates. Windows captures the primary screen once, then shows a small click-through outline window matching the current selection. `confirm` hides the outline, crops the pending raw capture, and broadcasts it as a normal `screenshot` message.
 
 Client:
 
@@ -67,10 +67,10 @@ Client:
 
 Phases:
 
-- `begin`: capture the current primary screen and open the Windows selection overlay.
+- `begin`: capture the current primary screen and prepare the remote outline.
 - `update`: move or resize the visible selection rectangle.
 - `confirm`: crop the selected rectangle and send it to paired tablets.
-- `cancel`: close the Windows selection overlay and discard the pending capture.
+- `cancel`: hide the Windows outline and discard the pending capture.
 
 ## Screenshot Delivery
 
@@ -88,3 +88,17 @@ Server:
   "png_base64": "base64"
 }
 ```
+
+After SHA-256 verification and gallery persistence, the tablet acknowledges the same screenshot ID:
+
+```json
+{
+  "type": "screenshot_result",
+  "token": "random-token",
+  "id": "uuid",
+  "success": true,
+  "message": null
+}
+```
+
+Windows reports success only after receiving a matching result. A missing result times out after 15 seconds.

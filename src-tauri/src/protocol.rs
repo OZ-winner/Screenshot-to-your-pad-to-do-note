@@ -27,6 +27,15 @@ pub struct RemoteSelectionPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub struct ScreenshotResultPayload {
+    pub token: String,
+    pub id: String,
+    pub success: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RemoteSelectionPhase {
     Begin,
     Update,
@@ -51,6 +60,7 @@ pub enum ClientMessage {
     Pair(PairPayload),
     Command(CommandPayload),
     RemoteSelection(RemoteSelectionPayload),
+    ScreenshotResult(ScreenshotResultPayload),
     Ping { token: Option<String> },
 }
 
@@ -93,6 +103,22 @@ pub enum BridgeStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureNoticePhase {
+    Processing,
+    Success,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureNotice {
+    pub revision: u64,
+    pub phase: CaptureNoticePhase,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicDevice {
@@ -111,6 +137,7 @@ pub struct AppStatus {
     pub pairing_url: String,
     pub connected_clients: usize,
     pub paired_devices: Vec<PublicDevice>,
+    pub capture_notice: Option<CaptureNotice>,
 }
 
 #[cfg(test)]
@@ -119,14 +146,12 @@ mod tests {
 
     #[test]
     fn parses_seek_commands_used_by_the_android_client() {
-        let backward: ClientMessage = serde_json::from_str(
-            r#"{"type":"command","command":"seek_back_5","token":"test"}"#,
-        )
-        .expect("backward command should parse");
-        let forward: ClientMessage = serde_json::from_str(
-            r#"{"type":"command","command":"seek_forward_5","token":"test"}"#,
-        )
-        .expect("forward command should parse");
+        let backward: ClientMessage =
+            serde_json::from_str(r#"{"type":"command","command":"seek_back_5","token":"test"}"#)
+                .expect("backward command should parse");
+        let forward: ClientMessage =
+            serde_json::from_str(r#"{"type":"command","command":"seek_forward_5","token":"test"}"#)
+                .expect("forward command should parse");
 
         assert!(matches!(
             backward,
@@ -135,6 +160,20 @@ mod tests {
         assert!(matches!(
             forward,
             ClientMessage::Command(command) if matches!(command.command, RemoteCommand::SeekForward5)
+        ));
+    }
+
+    #[test]
+    fn parses_android_screenshot_result() {
+        let message: ClientMessage = serde_json::from_str(
+            r#"{"type":"screenshot_result","token":"test","id":"capture-1","success":true,"message":null}"#,
+        )
+        .expect("screenshot result should parse");
+
+        assert!(matches!(
+            message,
+            ClientMessage::ScreenshotResult(result)
+                if result.id == "capture-1" && result.success
         ));
     }
 }

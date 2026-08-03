@@ -1,9 +1,8 @@
 package com.oz.tabletshotbridge
 
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
-import android.widget.Toast
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
@@ -24,6 +23,17 @@ enum class ConnectionState {
     Failed,
 }
 
+enum class CaptureFeedbackPhase {
+    Processing,
+    Success,
+    Failed,
+}
+
+data class CaptureFeedback(
+    val phase: CaptureFeedbackPhase,
+    val message: String,
+)
+
 object BridgeClient {
     private val http = OkHttpClient.Builder()
         .pingInterval(15, TimeUnit.SECONDS)
@@ -37,11 +47,15 @@ object BridgeClient {
     @Volatile private var generation = 0
     @Volatile private var reconnectScheduled = false
     @Volatile private var pendingOutbound: String? = null
+    @Volatile private var captureFeedbackGeneration = 0
+    @Volatile private var captureInProgress = false
     private lateinit var appContext: Context
     private val io = Executors.newSingleThreadExecutor()
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private val _state = MutableStateFlow(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = _state
+    private val _captureFeedback = MutableSharedFlow<CaptureFeedback>(extraBufferCapacity = 8)
+    val captureFeedback: SharedFlow<CaptureFeedback> = _captureFeedback
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -108,6 +122,7 @@ object BridgeClient {
                 if (activeGeneration != generation) return
                 socket = null
                 _state.value = ConnectionState.Failed
+                failActiveCapture("连接中断，截图失败")
                 scheduleReconnect()
             }
 
@@ -115,6 +130,7 @@ object BridgeClient {
                 if (activeGeneration != generation) return
                 socket = null
                 _state.value = ConnectionState.Disconnected
+                failActiveCapture("连接已断开，截图失败")
                 scheduleReconnect()
             }
         })
@@ -134,32 +150,56 @@ object BridgeClient {
 
             "screenshot" -> {
                 _state.value = ConnectionState.Saving
+                publishCaptureFeedback(CaptureFeedbackPhase.Processing, "正在保存截图...", timeout = true)
+                val id = json.getString("id")
                 val filename = json.getString("filename")
                 val pngBase64 = json.getString("png_base64")
                 val sha256 = json.getString("sha256")
                 io.execute {
-                    val ok = GallerySaver(appContext).savePng(
-                        filename = filename,
-                        pngBase64 = pngBase64,
-                        expectedSha256 = sha256,
-                    )
+                    val result = runCatching {
+                        GallerySaver(appContext).savePng(
+                            filename = filename,
+                            pngBase64 = pngBase64,
+                            expectedSha256 = sha256,
+                        )
+                    }
+                    val ok = result.getOrDefault(false)
                     _state.value = if (ok) ConnectionState.Saved else ConnectionState.Failed
                     if (ok) {
-                        Handler(Looper.getMainLooper()).post {
-                            Toast.makeText(appContext, "截图已保存到平板", Toast.LENGTH_SHORT).show()
-                        }
+                        publishCaptureFeedback(CaptureFeedbackPhase.Success, "截图已保存到平板")
+                        sendScreenshotResult(id, true, null)
+                    } else {
+                        val reason = "平板保存截图失败"
+                        publishCaptureFeedback(CaptureFeedbackPhase.Failed, reason)
+                        sendScreenshotResult(id, false, reason)
                     }
                 }
             }
 
-            "error" -> _state.value = ConnectionState.Failed
+            "error" -> {
+                _state.value = ConnectionState.Failed
+                failActiveCapture(json.optString("message", "截图失败"))
+            }
             "pong" -> _state.value = ConnectionState.Connected
-            "status" -> _state.value = ConnectionState.Connected
+            "status" -> {
+                _state.value = when (json.optString("status")) {
+                    "saving" -> ConnectionState.Saving
+                    "saved" -> ConnectionState.Saved
+                    "failed" -> ConnectionState.Failed
+                    else -> ConnectionState.Connected
+                }
+            }
         }
     }
 
     fun command(command: String) {
-        val activeToken = token ?: return
+        if (command == "screenshot") {
+            publishCaptureFeedback(CaptureFeedbackPhase.Processing, "正在截图...", timeout = true)
+        }
+        val activeToken = token ?: run {
+            failActiveCapture("电脑未连接，截图失败")
+            return
+        }
         val message = JSONObject()
             .put("type", "command")
             .put("command", command)
@@ -174,7 +214,13 @@ object BridgeClient {
         widthRatio: Float,
         heightRatio: Float,
     ) {
-        val activeToken = token ?: return
+        if (phase == "confirm") {
+            publishCaptureFeedback(CaptureFeedbackPhase.Processing, "正在保存截图...", timeout = true)
+        }
+        val activeToken = token ?: run {
+            failActiveCapture("电脑未连接，截图失败")
+            return
+        }
         val message = JSONObject()
             .put("type", "remote_selection")
             .put("token", activeToken)
@@ -184,6 +230,65 @@ object BridgeClient {
             .put("width_ratio", widthRatio.toDouble())
             .put("height_ratio", heightRatio.toDouble())
         sendOrQueue(message)
+    }
+
+    private fun sendScreenshotResult(id: String, success: Boolean, message: String?) {
+        val activeToken = token ?: return
+        val payload = JSONObject()
+            .put("type", "screenshot_result")
+            .put("token", activeToken)
+            .put("id", id)
+            .put("success", success)
+            .put("message", message ?: JSONObject.NULL)
+        sendOrQueue(payload)
+    }
+
+    private fun publishCaptureFeedback(
+        phase: CaptureFeedbackPhase,
+        message: String,
+        timeout: Boolean = false,
+    ) {
+        val activeGeneration = synchronized(this) {
+            captureFeedbackGeneration += 1
+            captureInProgress = phase == CaptureFeedbackPhase.Processing
+            captureFeedbackGeneration
+        }
+        _captureFeedback.tryEmit(CaptureFeedback(phase, message))
+
+        if (timeout) {
+            scheduler.schedule({
+                val shouldFail = synchronized(this) {
+                    if (captureFeedbackGeneration == activeGeneration && captureInProgress) {
+                        captureFeedbackGeneration += 1
+                        captureInProgress = false
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (shouldFail) {
+                    _captureFeedback.tryEmit(
+                        CaptureFeedback(CaptureFeedbackPhase.Failed, "截图超时，请重试"),
+                    )
+                    _state.value = ConnectionState.Failed
+                }
+            }, 15, TimeUnit.SECONDS)
+        }
+    }
+
+    private fun failActiveCapture(message: String) {
+        val shouldFail = synchronized(this) {
+            if (captureInProgress) {
+                captureFeedbackGeneration += 1
+                captureInProgress = false
+                true
+            } else {
+                false
+            }
+        }
+        if (shouldFail) {
+            _captureFeedback.tryEmit(CaptureFeedback(CaptureFeedbackPhase.Failed, message))
+        }
     }
 
     fun sendPing() {

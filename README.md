@@ -12,27 +12,29 @@
 - 平板悬浮窗使用图标按钮：区域截图、快速截全屏、后退 5 秒、暂停/播放、快进 5 秒，并可收起成 1.5 倍大悬浮球。
 - 悬浮球只有靠近屏幕左右边缘时才会半掩吸附；吸附后仍可直接拖动，点一下可展开。
 - 悬浮球在左半屏向右展开，在右半屏向左展开；球体完全越过屏幕中线才切换方向，压住中线时沿用上一次方向。
-- 平板点区域截图图标后会出现全屏选区层，拖出矩形区域，电脑端同步显示对应屏幕区域，点对勾后裁剪发送到平板相册。
-- 平板触发远程选区时，Windows 端会先抓取原始像素并立即显示选区窗口，后台生成 JPEG 预览；最终发送到平板的图片仍是无损 PNG。
-- 选区层支持取消、重新划区、保存，交互接近微信截图的选择流程。
+- 平板点区域截图图标后会出现全屏选区层，拖出矩形区域后可以整体移动或从四角调整；电脑端同步显示鼠标穿透、不抢焦点的绿色细框。
+- 平板远程选区只抓取一次 Windows 主屏原始像素，不生成无用预览；确认时后台裁剪并发送无损 PNG，电脑不会进入全屏或改变当前画面。
+- 选区层支持取消、重新划区和保存；拖动更新最多每 16ms 合并一次，避免消息积压。
+- 全屏和区域截图都会立即在电脑、平板显示处理中状态；只有平板完成 PNG 解码、SHA-256 校验和图库写入后，两端才显示“截图已保存到平板”。失败或 15 秒无回执会显示错误，不会误报成功。
 - Windows 端 `Ctrl+Alt+A` 或主界面按钮会打开选区截图预览，松开鼠标后发送选区截图。
+- 关闭 Windows 主窗口时程序会隐藏到系统托盘并继续在后台运行；点击托盘图标可恢复，托盘菜单“退出”才会结束服务。
 - 图片写入安卓系统相册：`Pictures/PC Screenshots`。
 
 ## 快速使用
 
 ### 发布版安装
 
-普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.1](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.1) 下载同一版本的两个文件：
+普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.2](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.2) 下载同一版本的两个文件：
 
-- Windows 电脑端：`ScreenshotToPad-Windows-0.1.1-x64-setup.exe`
-- Android 平板端：`ScreenshotToPad-Android-0.1.1-debug.apk`
+- Windows 电脑端：`ScreenshotToPad-Windows-0.1.2-x64-setup.exe`
+- Android 平板端：`ScreenshotToPad-Android-0.1.2-debug.apk`
 - 校验文件：`SHA256SUMS.txt`
 
 安装后让电脑和平板连接同一个 Wi-Fi，先启动 Windows 端，再打开平板 App 扫码配对。首次使用需要在 Windows 防火墙中允许专用网络通信，并在平板系统设置里允许悬浮窗权限。
 
 ### 1. 启动 Windows 端
 
-发布版用户双击安装 `ScreenshotToPad-Windows-0.1.1-x64-setup.exe`，安装完成后启动“截图直传”。
+发布版用户双击安装 `ScreenshotToPad-Windows-0.1.2-x64-setup.exe`，安装完成后启动“截图直传”。
 
 在项目根目录运行：
 
@@ -43,6 +45,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev-windows.ps
 也可以运行项目里的 `启动截图直传-Windows端.bat`，或运行 `scripts\create-desktop-shortcut.ps1` 后使用桌面快捷方式。
 
 首次启动时，如果 Windows 防火墙弹窗，请允许专用网络通信。主界面会显示局域网地址、配对码和二维码。
+
+点击主窗口右上角关闭按钮会隐藏到系统托盘，平板连接和快捷键仍可继续使用。点击托盘图标恢复窗口；需要完全退出时，在托盘菜单选择“退出”。
 
 ### 2. 安装 Android 平板端
 
@@ -108,7 +112,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.
 安装包输出位置：
 
 ```text
-src-tauri\target\release\bundle\nsis\截图直传_0.1.1_x64-setup.exe
+src-tauri\target\release\bundle\nsis\截图直传_0.1.2_x64-setup.exe
 ```
 
 ## Android 开发配置
@@ -244,6 +248,18 @@ File -> Settings -> Languages & Frameworks -> Android SDK
   "height": 1080,
   "sha256": "...",
   "png_base64": "..."
+}
+```
+
+平板完成校验和图库写入后返回：
+
+```json
+{
+  "type": "screenshot_result",
+  "token": "paired-token",
+  "id": "...",
+  "success": true,
+  "message": null
 }
 ```
 

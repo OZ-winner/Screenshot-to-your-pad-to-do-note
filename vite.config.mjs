@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
 
 export default defineConfig({
   plugins: [react()],
@@ -20,5 +21,13 @@ export default defineConfig({
   build: {
     target: "es2020",
     minify: false,
+    rollupOptions: {
+      input: {
+        main: resolve(process.cwd(), "index.html"),
+        overlay: resolve(process.cwd(), "overlay.html"),
+        selectionOutline: resolve(process.cwd(), "selection-outline.html"),
+        captureToast: resolve(process.cwd(), "capture-toast.html"),
+      },
+    },
   },
 });

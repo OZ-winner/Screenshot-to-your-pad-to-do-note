@@ -16,6 +16,12 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.view.setPadding
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 class FloatingRemoteService : Service() {
     companion object {
@@ -32,6 +38,8 @@ class FloatingRemoteService : Service() {
     private var params: WindowManager.LayoutParams? = null
     private var floatingState = FloatingState.ExpandedRight
     private var lastExpandDirection = ExpandDirection.Right
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var screenshotNotice: View? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -42,6 +50,11 @@ class FloatingRemoteService : Service() {
             return
         }
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        serviceScope.launch {
+            BridgeClient.captureFeedback.collect { feedback ->
+                showCaptureFeedback(feedback)
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -69,6 +82,9 @@ class FloatingRemoteService : Service() {
         selectionOverlay?.let { windowManager.removeView(it) }
         panel = null
         selectionOverlay = null
+        screenshotNotice?.let { windowManager.removeView(it) }
+        screenshotNotice = null
+        serviceScope.cancel()
         super.onDestroy()
     }
 
@@ -435,6 +451,10 @@ class FloatingRemoteService : Service() {
         var downX = 0f
         var downY = 0f
         var hasSelection = false
+        var adjustmentStart = Quad(0, 0, 0, 0)
+        var adjustmentDownX = 0f
+        var adjustmentDownY = 0f
+        val resizeHandleSize = 30
 
         val touchLayer = FrameLayout(this)
         root.addView(
@@ -452,6 +472,52 @@ class FloatingRemoteService : Service() {
         val rectLayout = FrameLayout.LayoutParams(1, 1)
         root.addView(rectView, rectLayout)
 
+        val resizeHandles = mutableMapOf<SelectionAdjustMode, View>()
+        SelectionAdjustMode.entries
+            .filter { it != SelectionAdjustMode.Move }
+            .forEach { mode ->
+                val handle = View(this).apply {
+                    background = roundedBackground(0xff22c55e.toInt(), resizeHandleSize / 2f, oval = true)
+                    visibility = View.GONE
+                    setOnTouchListener { _, event ->
+                        if (!hasSelection) {
+                            return@setOnTouchListener false
+                        }
+                        when (event.actionMasked) {
+                            MotionEvent.ACTION_DOWN -> {
+                                adjustmentStart = Quad(rectX, rectY, rectW, rectH)
+                                adjustmentDownX = event.rawX
+                                adjustmentDownY = event.rawY
+                                true
+                            }
+
+                            MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                                val next = adjustSelection(
+                                    mode,
+                                    adjustmentStart,
+                                    event.rawX - adjustmentDownX,
+                                    event.rawY - adjustmentDownY,
+                                    root.width,
+                                    root.height,
+                                )
+                                rectX = next.x
+                                rectY = next.y
+                                rectW = next.width
+                                rectH = next.height
+                                applyRect(rectView, rectLayout, rectX, rectY, rectW, rectH)
+                                positionResizeHandles(resizeHandles, rectX, rectY, rectW, rectH, resizeHandleSize)
+                                sendSelection("update", root, rectX, rectY, rectW, rectH)
+                                true
+                            }
+
+                            else -> true
+                        }
+                    }
+                }
+                resizeHandles[mode] = handle
+                root.addView(handle, FrameLayout.LayoutParams(resizeHandleSize, resizeHandleSize))
+            }
+
         lateinit var actions: LinearLayout
         actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -466,8 +532,9 @@ class FloatingRemoteService : Service() {
             addView(actionButton(R.drawable.ic_redraw, "重新划区") {
                 hasSelection = false
                 rectView.visibility = View.GONE
+                resizeHandles.values.forEach { it.visibility = View.GONE }
                 actions.visibility = View.GONE
-                sendSelection("cancel", root, rectX, rectY, rectW, rectH)
+                sendSelection("update", root, 0, 0, 0, 0)
             })
             addView(actionButton(R.drawable.ic_check, "保存") {
                 if (hasSelection && rectW > 8 && rectH > 8) {
@@ -484,6 +551,41 @@ class FloatingRemoteService : Service() {
             bottomMargin = 54
         }
         root.addView(actions, actionsLayout)
+
+        rectView.setOnTouchListener { _, event ->
+            if (!hasSelection) {
+                return@setOnTouchListener false
+            }
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    adjustmentStart = Quad(rectX, rectY, rectW, rectH)
+                    adjustmentDownX = event.rawX
+                    adjustmentDownY = event.rawY
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                    val next = adjustSelection(
+                        SelectionAdjustMode.Move,
+                        adjustmentStart,
+                        event.rawX - adjustmentDownX,
+                        event.rawY - adjustmentDownY,
+                        root.width,
+                        root.height,
+                    )
+                    rectX = next.x
+                    rectY = next.y
+                    rectW = next.width
+                    rectH = next.height
+                    applyRect(rectView, rectLayout, rectX, rectY, rectW, rectH)
+                    positionResizeHandles(resizeHandles, rectX, rectY, rectW, rectH, resizeHandleSize)
+                    sendSelection("update", root, rectX, rectY, rectW, rectH)
+                    true
+                }
+
+                else -> true
+            }
+        }
 
         val layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -511,12 +613,13 @@ class FloatingRemoteService : Service() {
                     hasSelection = false
                     actions.visibility = View.GONE
                     rectView.visibility = View.VISIBLE
+                    resizeHandles.values.forEach { it.visibility = View.GONE }
                     rectX = downX.toInt()
                     rectY = downY.toInt()
                     rectW = 1
                     rectH = 1
                     applyRect(rectView, rectLayout, rectX, rectY, rectW, rectH)
-                    sendSelection("begin", root, rectX, rectY, rectW, rectH)
+                    sendSelection("update", root, rectX, rectY, rectW, rectH)
                     true
                 }
 
@@ -541,6 +644,10 @@ class FloatingRemoteService : Service() {
                     applyRect(rectView, rectLayout, rectX, rectY, rectW, rectH)
                     sendSelection("update", root, rectX, rectY, rectW, rectH)
                     actions.visibility = if (hasSelection) View.VISIBLE else View.GONE
+                    resizeHandles.values.forEach { it.visibility = if (hasSelection) View.VISIBLE else View.GONE }
+                    if (hasSelection) {
+                        positionResizeHandles(resizeHandles, rectX, rectY, rectW, rectH, resizeHandleSize)
+                    }
                     true
                 }
 
@@ -552,6 +659,63 @@ class FloatingRemoteService : Service() {
     private fun closeSelectionOverlay() {
         selectionOverlay?.let { windowManager.removeView(it) }
         selectionOverlay = null
+    }
+
+    private fun showCaptureFeedback(feedback: CaptureFeedback) {
+        screenshotNotice?.let {
+            try {
+                windowManager.removeView(it)
+            } catch (_: IllegalArgumentException) {
+                // A previous short-lived notice can already be removed.
+            }
+        }
+
+        val notice = TextView(this).apply {
+            text = feedback.message
+            textSize = 15f
+            setTextColor(0xffffffff.toInt())
+            gravity = Gravity.CENTER
+            setPadding(18, 12, 18, 12)
+            val color = when (feedback.phase) {
+                CaptureFeedbackPhase.Processing -> 0xee111827.toInt()
+                CaptureFeedbackPhase.Success -> 0xee15803d.toInt()
+                CaptureFeedbackPhase.Failed -> 0xeeb42318.toInt()
+            }
+            background = roundedBackground(color, 12f)
+            elevation = 18f
+            alpha = 0f
+        }
+        val noticeParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = 72
+        }
+        windowManager.addView(notice, noticeParams)
+        screenshotNotice = notice
+        notice.animate().alpha(1f).setDuration(150L).start()
+        if (feedback.phase != CaptureFeedbackPhase.Processing) {
+            notice.postDelayed({
+                notice.animate()
+                    .alpha(0f)
+                    .setDuration(180L)
+                    .withEndAction {
+                        if (screenshotNotice === notice) {
+                            try {
+                                windowManager.removeView(notice)
+                            } catch (_: IllegalArgumentException) {
+                                // The service can be stopped while the notice is visible.
+                            }
+                            screenshotNotice = null
+                        }
+                    }
+                    .start()
+            }, 2_800L)
+        }
     }
 
     private fun applyRect(
@@ -567,6 +731,79 @@ class FloatingRemoteService : Service() {
         layoutParams.width = width.coerceAtLeast(1)
         layoutParams.height = height.coerceAtLeast(1)
         rectView.layoutParams = layoutParams
+    }
+
+    private fun positionResizeHandles(
+        handles: Map<SelectionAdjustMode, View>,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        size: Int,
+    ) {
+        val halfSize = size / 2
+        handles.forEach { (mode, handle) ->
+            val left = when (mode) {
+                SelectionAdjustMode.TopLeft, SelectionAdjustMode.BottomLeft -> x - halfSize
+                SelectionAdjustMode.TopRight, SelectionAdjustMode.BottomRight -> x + width - halfSize
+                SelectionAdjustMode.Move -> x
+            }
+            val top = when (mode) {
+                SelectionAdjustMode.TopLeft, SelectionAdjustMode.TopRight -> y - halfSize
+                SelectionAdjustMode.BottomLeft, SelectionAdjustMode.BottomRight -> y + height - halfSize
+                SelectionAdjustMode.Move -> y
+            }
+            handle.layoutParams = (handle.layoutParams as FrameLayout.LayoutParams).apply {
+                leftMargin = left
+                topMargin = top
+            }
+        }
+    }
+
+    private fun adjustSelection(
+        mode: SelectionAdjustMode,
+        start: Quad,
+        dx: Float,
+        dy: Float,
+        rootWidth: Int,
+        rootHeight: Int,
+    ): Quad {
+        val minSize = 16
+        val maxWidth = rootWidth.coerceAtLeast(minSize)
+        val maxHeight = rootHeight.coerceAtLeast(minSize)
+        val right = start.x + start.width
+        val bottom = start.y + start.height
+        val deltaX = dx.toInt()
+        val deltaY = dy.toInt()
+
+        return when (mode) {
+            SelectionAdjustMode.Move -> Quad(
+                x = (start.x + deltaX).coerceIn(0, maxWidth - start.width),
+                y = (start.y + deltaY).coerceIn(0, maxHeight - start.height),
+                width = start.width,
+                height = start.height,
+            )
+            SelectionAdjustMode.TopLeft -> {
+                val left = (start.x + deltaX).coerceIn(0, right - minSize)
+                val top = (start.y + deltaY).coerceIn(0, bottom - minSize)
+                Quad(left, top, right - left, bottom - top)
+            }
+            SelectionAdjustMode.TopRight -> {
+                val nextRight = (right + deltaX).coerceIn(start.x + minSize, maxWidth)
+                val top = (start.y + deltaY).coerceIn(0, bottom - minSize)
+                Quad(start.x, top, nextRight - start.x, bottom - top)
+            }
+            SelectionAdjustMode.BottomLeft -> {
+                val left = (start.x + deltaX).coerceIn(0, right - minSize)
+                val nextBottom = (bottom + deltaY).coerceIn(start.y + minSize, maxHeight)
+                Quad(left, start.y, right - left, nextBottom - start.y)
+            }
+            SelectionAdjustMode.BottomRight -> {
+                val nextRight = (right + deltaX).coerceIn(start.x + minSize, maxWidth)
+                val nextBottom = (bottom + deltaY).coerceIn(start.y + minSize, maxHeight)
+                Quad(start.x, start.y, nextRight - start.x, nextBottom - start.y)
+            }
+        }
     }
 
     private fun rectFromDrag(root: View, startX: Float, startY: Float, endX: Float, endY: Float): Quad {
@@ -778,5 +1015,13 @@ class FloatingRemoteService : Service() {
         ExpandedLeft,
         CollapsingToBall,
         Ball,
+    }
+
+    private enum class SelectionAdjustMode {
+        Move,
+        TopLeft,
+        TopRight,
+        BottomLeft,
+        BottomRight,
     }
 }

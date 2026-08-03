@@ -16,6 +16,7 @@ use crate::protocol::ServerMessage;
 
 #[derive(Debug, Clone)]
 pub struct ScreenshotArtifact {
+    pub id: String,
     pub message: ServerMessage,
 }
 
@@ -55,16 +56,28 @@ pub struct SelectionRatios {
 
 impl SelectionRatios {
     pub fn to_rect(&self, screen_width: u32, screen_height: u32) -> SelectionRect {
+        let screen_width = screen_width.max(1);
+        let screen_height = screen_height.max(1);
         let x_ratio = self.x_ratio.clamp(0.0, 1.0);
         let y_ratio = self.y_ratio.clamp(0.0, 1.0);
         let width_ratio = self.width_ratio.clamp(0.0, 1.0 - x_ratio);
         let height_ratio = self.height_ratio.clamp(0.0, 1.0 - y_ratio);
+        let x =
+            ((x_ratio * screen_width as f64).round() as u32).min(screen_width.saturating_sub(1));
+        let y =
+            ((y_ratio * screen_height as f64).round() as u32).min(screen_height.saturating_sub(1));
+        let width = ((width_ratio * screen_width as f64).round() as u32)
+            .max(1)
+            .min(screen_width - x);
+        let height = ((height_ratio * screen_height as f64).round() as u32)
+            .max(1)
+            .min(screen_height - y);
 
         SelectionRect {
-            x: (x_ratio * screen_width as f64).round() as u32,
-            y: (y_ratio * screen_height as f64).round() as u32,
-            width: (width_ratio * screen_width as f64).round().max(1.0) as u32,
-            height: (height_ratio * screen_height as f64).round().max(1.0) as u32,
+            x,
+            y,
+            width,
+            height,
         }
     }
 }
@@ -163,9 +176,11 @@ pub fn build_screenshot_message(
     hasher.update(&png);
     let sha256 = format!("{:x}", hasher.finalize());
 
+    let id = Uuid::new_v4().to_string();
     Ok(ScreenshotArtifact {
+        id: id.clone(),
         message: ServerMessage::Screenshot {
-            id: Uuid::new_v4().to_string(),
+            id,
             filename,
             created_at: now.to_rfc3339(),
             width,
@@ -250,5 +265,47 @@ mod tests {
         assert_eq!((width, height), (4, 3));
         assert_eq!((decoded.width(), decoded.height()), (4, 3));
         assert_eq!(decoded.get_pixel(2, 1).0, [80, 50, 7, 255]);
+    }
+
+    #[test]
+    fn selection_ratios_map_to_primary_screen_pixels() {
+        let rect = SelectionRatios {
+            x_ratio: 0.25,
+            y_ratio: 0.1,
+            width_ratio: 0.5,
+            height_ratio: 0.75,
+        }
+        .to_rect(1920, 1080);
+
+        assert_eq!((rect.x, rect.y), (480, 108));
+        assert_eq!((rect.width, rect.height), (960, 810));
+    }
+
+    #[test]
+    fn selection_ratios_clamp_to_screen_boundaries() {
+        let rect = SelectionRatios {
+            x_ratio: 0.9,
+            y_ratio: -0.5,
+            width_ratio: 0.5,
+            height_ratio: 2.0,
+        }
+        .to_rect(1000, 500);
+
+        assert_eq!((rect.x, rect.y), (900, 0));
+        assert_eq!((rect.width, rect.height), (100, 500));
+    }
+
+    #[test]
+    fn selection_at_bottom_right_stays_inside_the_screen() {
+        let rect = SelectionRatios {
+            x_ratio: 1.0,
+            y_ratio: 1.0,
+            width_ratio: 0.0,
+            height_ratio: 0.0,
+        }
+        .to_rect(1000, 500);
+
+        assert_eq!((rect.x, rect.y), (999, 499));
+        assert_eq!((rect.width, rect.height), (1, 1));
     }
 }

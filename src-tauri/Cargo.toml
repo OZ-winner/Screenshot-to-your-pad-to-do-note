@@ -1,6 +1,6 @@
 [package]
 name = "tablet-shot-bridge"
-version = "0.1.1"
+version = "0.1.2"
 description = "Windows screenshot and media remote bridge for Android tablets"
 authors = ["OZ"]
 edition = "2021"
