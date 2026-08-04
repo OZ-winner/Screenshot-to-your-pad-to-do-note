@@ -15,7 +15,8 @@
 - 平板点区域截图图标后会出现全屏选区层，拖出矩形区域后可以整体移动或从四角调整；电脑端同步显示鼠标穿透、不抢焦点的绿色细框。
 - 平板远程选区只抓取一次 Windows 主屏原始像素，不生成无用预览；确认时后台裁剪并发送无损 PNG，电脑不会进入全屏或改变当前画面。
 - 选区层支持取消、重新划区和保存；拖动更新最多每 16ms 合并一次，避免消息积压。
-- 全屏和区域截图都会立即在电脑、平板显示处理中状态；只有平板完成 PNG 解码、SHA-256 校验和图库写入后，两端才显示“截图已保存到平板”。失败或 15 秒无回执会显示错误，不会误报成功。
+- 全屏截图使用全分辨率 JPEG 90，区域截图保持无损 PNG；两者均通过 WebSocket 二进制帧直接传输，避免 Base64 和大 JSON 的额外开销。
+- 全屏和区域截图都会立即在电脑、平板显示处理中状态；只有平板完成 SHA-256 校验和图库写入后，两端才显示“截图已保存到平板”。失败或 15 秒无回执会显示错误，不会误报成功。
 - Windows 端 `Ctrl+Alt+A` 或主界面按钮会打开选区截图预览，松开鼠标后发送选区截图。
 - 关闭 Windows 主窗口时程序会隐藏到系统托盘并继续在后台运行；点击托盘图标可恢复，托盘菜单“退出”才会结束服务。
 - 图片写入安卓系统相册：`Pictures/PC Screenshots`。
@@ -24,17 +25,17 @@
 
 ### 发布版安装
 
-普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.2](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.2) 下载同一版本的两个文件：
+普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.3](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.3) 下载同一版本的两个文件：
 
-- Windows 电脑端：`ScreenshotToPad-Windows-0.1.2-x64-setup.exe`
-- Android 平板端：`ScreenshotToPad-Android-0.1.2-debug.apk`
+- Windows 电脑端：`ScreenshotToPad-Windows-0.1.3-x64-setup.exe`
+- Android 平板端：`ScreenshotToPad-Android-0.1.3-debug.apk`
 - 校验文件：`SHA256SUMS.txt`
 
 安装后让电脑和平板连接同一个 Wi-Fi，先启动 Windows 端，再打开平板 App 扫码配对。首次使用需要在 Windows 防火墙中允许专用网络通信，并在平板系统设置里允许悬浮窗权限。
 
 ### 1. 启动 Windows 端
 
-发布版用户双击安装 `ScreenshotToPad-Windows-0.1.2-x64-setup.exe`，安装完成后启动“截图直传”。
+发布版用户双击安装 `ScreenshotToPad-Windows-0.1.3-x64-setup.exe`，安装完成后启动“截图直传”。
 
 在项目根目录运行：
 
@@ -112,7 +113,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.
 安装包输出位置：
 
 ```text
-src-tauri\target\release\bundle\nsis\截图直传_0.1.2_x64-setup.exe
+src-tauri\target\release\bundle\nsis\截图直传_0.1.3_x64-setup.exe
 ```
 
 ## Android 开发配置
@@ -141,6 +142,12 @@ systemProp.https.proxyPort=7890
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-android.ps1
+```
+
+离线运行截图二进制协议检查：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-android-protocol.ps1
 ```
 
 检查 Android 依赖网络：
@@ -236,20 +243,23 @@ File -> Settings -> Languages & Frameworks -> Android SDK
 - `confirm`
 - `cancel`
 
-服务端截图：
+服务端先发送截图元数据文本帧：
 
 ```json
 {
-  "type": "screenshot",
+  "type": "screenshot_meta",
   "id": "...",
-  "filename": "PC_20260730_120000.png",
+  "filename": "PC_20260804_120000.jpg",
   "created_at": "...",
   "width": 1920,
   "height": 1080,
-  "sha256": "...",
-  "png_base64": "..."
+  "mime_type": "image/jpeg",
+  "byte_length": 183421,
+  "sha256": "..."
 }
 ```
+
+紧接着发送一条 WebSocket 二进制帧，内容为 JPEG 或 PNG 原始字节。全屏截图为 `.jpg` / `image/jpeg`，区域截图为 `.png` / `image/png`。元数据与二进制帧必须按顺序成对发送。
 
 平板完成校验和图库写入后返回：
 

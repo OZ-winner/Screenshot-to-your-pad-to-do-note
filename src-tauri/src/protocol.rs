@@ -82,14 +82,15 @@ pub enum ServerMessage {
     Error {
         message: String,
     },
-    Screenshot {
+    ScreenshotMeta {
         id: String,
         filename: String,
         created_at: String,
         width: u32,
         height: u32,
+        mime_type: String,
+        byte_length: u64,
         sha256: String,
-        png_base64: String,
     },
     Pong,
 }
@@ -142,7 +143,7 @@ pub struct AppStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClientMessage, RemoteCommand};
+    use super::{ClientMessage, RemoteCommand, ServerMessage};
 
     #[test]
     fn parses_seek_commands_used_by_the_android_client() {
@@ -175,5 +176,25 @@ mod tests {
             ClientMessage::ScreenshotResult(result)
                 if result.id == "capture-1" && result.success
         ));
+    }
+
+    #[test]
+    fn serializes_binary_screenshot_metadata_without_base64() {
+        let message = ServerMessage::ScreenshotMeta {
+            id: "capture-1".to_string(),
+            filename: "PC_20260804_120000.jpg".to_string(),
+            created_at: "2026-08-04T12:00:00+08:00".to_string(),
+            width: 1920,
+            height: 1080,
+            mime_type: "image/jpeg".to_string(),
+            byte_length: 123_456,
+            sha256: "abc123".to_string(),
+        };
+        let json = serde_json::to_value(message).expect("metadata should serialize");
+
+        assert_eq!(json["type"], "screenshot_meta");
+        assert_eq!(json["mime_type"], "image/jpeg");
+        assert_eq!(json["byte_length"], 123_456);
+        assert!(json.get("png_base64").is_none());
     }
 }

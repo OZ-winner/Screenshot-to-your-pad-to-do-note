@@ -10,6 +10,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -49,6 +50,7 @@ object BridgeClient {
     @Volatile private var pendingOutbound: String? = null
     @Volatile private var captureFeedbackGeneration = 0
     @Volatile private var captureInProgress = false
+    private val screenshotFrameBinder = ScreenshotFrameBinder()
     private lateinit var appContext: Context
     private val io = Executors.newSingleThreadExecutor()
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
@@ -118,9 +120,15 @@ object BridgeClient {
                 handleMessage(url, deviceName, text)
             }
 
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (activeGeneration != generation) return
+                handleScreenshotBinary(bytes)
+            }
+
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (activeGeneration != generation) return
                 socket = null
+                clearPendingScreenshotMetadata()
                 _state.value = ConnectionState.Failed
                 failActiveCapture("连接中断，截图失败")
                 scheduleReconnect()
@@ -129,6 +137,7 @@ object BridgeClient {
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (activeGeneration != generation) return
                 socket = null
+                clearPendingScreenshotMetadata()
                 _state.value = ConnectionState.Disconnected
                 failActiveCapture("连接已断开，截图失败")
                 scheduleReconnect()
@@ -148,33 +157,7 @@ object BridgeClient {
                 _state.value = ConnectionState.Connected
             }
 
-            "screenshot" -> {
-                _state.value = ConnectionState.Saving
-                publishCaptureFeedback(CaptureFeedbackPhase.Processing, "正在保存截图...", timeout = true)
-                val id = json.getString("id")
-                val filename = json.getString("filename")
-                val pngBase64 = json.getString("png_base64")
-                val sha256 = json.getString("sha256")
-                io.execute {
-                    val result = runCatching {
-                        GallerySaver(appContext).savePng(
-                            filename = filename,
-                            pngBase64 = pngBase64,
-                            expectedSha256 = sha256,
-                        )
-                    }
-                    val ok = result.getOrDefault(false)
-                    _state.value = if (ok) ConnectionState.Saved else ConnectionState.Failed
-                    if (ok) {
-                        publishCaptureFeedback(CaptureFeedbackPhase.Success, "截图已保存到平板")
-                        sendScreenshotResult(id, true, null)
-                    } else {
-                        val reason = "平板保存截图失败"
-                        publishCaptureFeedback(CaptureFeedbackPhase.Failed, reason)
-                        sendScreenshotResult(id, false, reason)
-                    }
-                }
-            }
+            "screenshot_meta" -> handleScreenshotMetadata(json)
 
             "error" -> {
                 _state.value = ConnectionState.Failed
@@ -190,6 +173,88 @@ object BridgeClient {
                 }
             }
         }
+    }
+
+    private fun handleScreenshotMetadata(json: JSONObject) {
+        val metadata = runCatching {
+            PendingScreenshotMetadata(
+                id = json.getString("id"),
+                filename = json.getString("filename"),
+                width = json.getInt("width"),
+                height = json.getInt("height"),
+                mimeType = json.getString("mime_type"),
+                byteLength = json.getLong("byte_length"),
+                sha256 = json.getString("sha256").lowercase(),
+            )
+        }.getOrElse {
+            failActiveCapture("截图元数据无效")
+            _state.value = ConnectionState.Failed
+            return
+        }
+
+        val validationError = validateScreenshotMetadata(metadata)
+        if (validationError != null) {
+            sendScreenshotResult(metadata.id, false, validationError)
+            publishCaptureFeedback(CaptureFeedbackPhase.Failed, validationError)
+            _state.value = ConnectionState.Failed
+            return
+        }
+
+        val replaced = screenshotFrameBinder.expect(metadata)
+        replaced?.let {
+            sendScreenshotResult(it.id, false, "截图二进制数据缺失")
+        }
+        _state.value = ConnectionState.Saving
+        publishCaptureFeedback(CaptureFeedbackPhase.Processing, "正在保存截图...")
+        scheduler.schedule({
+            screenshotFrameBinder.expire(metadata.id)?.let {
+                completeScreenshot(it.id, false, "截图二进制数据接收超时")
+            }
+        }, 15, TimeUnit.SECONDS)
+    }
+
+    private fun handleScreenshotBinary(payload: ByteString) {
+        val metadata = screenshotFrameBinder.take() ?: run {
+            failActiveCapture("收到未匹配的截图数据")
+            _state.value = ConnectionState.Failed
+            return
+        }
+        val bytes = payload.toByteArray()
+        val validationError = validateScreenshotPayload(metadata, bytes)
+        if (validationError != null) {
+            completeScreenshot(metadata.id, false, validationError)
+            return
+        }
+
+        io.execute {
+            val saved = runCatching {
+                GallerySaver(appContext).saveImage(
+                    filename = metadata.filename,
+                    mimeType = metadata.mimeType,
+                    bytes = bytes,
+                )
+            }.getOrDefault(false)
+            completeScreenshot(
+                id = metadata.id,
+                success = saved,
+                failureMessage = "平板保存截图失败",
+            )
+        }
+    }
+
+    private fun completeScreenshot(id: String, success: Boolean, failureMessage: String) {
+        _state.value = if (success) ConnectionState.Saved else ConnectionState.Failed
+        if (success) {
+            publishCaptureFeedback(CaptureFeedbackPhase.Success, "截图已保存到平板")
+            sendScreenshotResult(id, true, null)
+        } else {
+            publishCaptureFeedback(CaptureFeedbackPhase.Failed, failureMessage)
+            sendScreenshotResult(id, false, failureMessage)
+        }
+    }
+
+    private fun clearPendingScreenshotMetadata() {
+        screenshotFrameBinder.clear()
     }
 
     fun command(command: String) {
@@ -324,6 +389,7 @@ object BridgeClient {
 
     fun close() {
         generation += 1
+        clearPendingScreenshotMetadata()
         socket?.close(1000, "reconnect")
         socket = null
         _state.value = ConnectionState.Disconnected

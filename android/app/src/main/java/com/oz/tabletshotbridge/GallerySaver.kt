@@ -4,19 +4,20 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Build
 import android.provider.MediaStore
-import android.util.Base64
-import java.security.MessageDigest
 
 class GallerySaver(private val context: Context) {
-    fun savePng(filename: String, pngBase64: String, expectedSha256: String): Boolean {
-        val bytes = Base64.decode(pngBase64, Base64.DEFAULT)
-        if (sha256(bytes) != expectedSha256.lowercase()) {
+    fun saveImage(
+        filename: String,
+        mimeType: String,
+        bytes: ByteArray,
+    ): Boolean {
+        if (mimeType !in SUPPORTED_SCREENSHOT_MIME_TYPES) {
             return false
         }
 
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+            put(MediaStore.Images.Media.MIME_TYPE, mimeType)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/PC Screenshots")
                 put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -25,20 +26,29 @@ class GallerySaver(private val context: Context) {
 
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-        resolver.openOutputStream(uri)?.use { output ->
-            output.write(bytes)
-        } ?: return false
+        var completed = false
+        return try {
+            resolver.openOutputStream(uri)?.use { output ->
+                output.write(bytes)
+                output.flush()
+            } ?: return false
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.clear()
-            values.put(MediaStore.Images.Media.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                if (resolver.update(uri, values, null, null) != 1) {
+                    return false
+                }
+            }
+            completed = true
+            true
+        } catch (_: Exception) {
+            false
+        } finally {
+            if (!completed) {
+                runCatching { resolver.delete(uri, null, null) }
+            }
         }
-        return true
     }
 
-    private fun sha256(bytes: ByteArray): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        return digest.joinToString("") { "%02x".format(it) }
-    }
 }

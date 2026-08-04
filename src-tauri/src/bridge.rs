@@ -1,6 +1,6 @@
 use crate::{
-    capture::{PendingPreview, SelectionRatios},
-    protocol::{AppStatus, CaptureNotice, CaptureNoticePhase, PublicDevice, ServerMessage},
+    capture::{PendingPreview, ScreenshotArtifact, SelectionRatios},
+    protocol::{AppStatus, CaptureNotice, CaptureNoticePhase, PublicDevice},
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -33,7 +33,7 @@ pub struct BridgeState {
     pub pairing_code: String,
     pub paired_devices: HashMap<String, PairedDevice>,
     pub connected_clients: usize,
-    pub screenshot_tx: broadcast::Sender<ServerMessage>,
+    pub screenshot_tx: broadcast::Sender<ScreenshotArtifact>,
     pub pending_capture: Option<PendingCapture>,
     pub remote_selection: Option<SelectionRatios>,
     pub capture_sequence: u64,

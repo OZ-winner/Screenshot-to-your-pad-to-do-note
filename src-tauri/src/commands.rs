@@ -1,8 +1,9 @@
 use crate::{
     bridge::{save_devices, PendingCapture, SharedBridge},
     capture::{
-        build_screenshot_message, capture_primary_png, capture_primary_raw, crop_rgba_to_png,
-        preview_from_rgba, PendingPreview, ScreenshotArtifact, SelectionRatios, SelectionRect,
+        build_screenshot_artifact, capture_primary_jpeg, capture_primary_raw, crop_rgba_to_png,
+        preview_from_rgba, PendingPreview, ScreenshotArtifact, ScreenshotFormat, SelectionRatios,
+        SelectionRect,
     },
     media::execute_media_command,
     protocol::{
@@ -123,8 +124,9 @@ async fn handle_client(app: AppHandle, state: SharedBridge, stream: TcpStream) -
                 }
             }
             broadcast = screenshot_rx.recv(), if authenticated => {
-                if let Ok(message) = broadcast {
-                    write.send(Message::Text(serde_json::to_string(&message)?)).await?;
+                if let Ok(artifact) = broadcast {
+                    write.send(Message::Text(serde_json::to_string(&artifact.metadata)?)).await?;
+                    write.send(Message::Binary(artifact.bytes.as_ref().clone())).await?;
                 }
             }
         }
@@ -234,8 +236,8 @@ async fn handle_client_message(
 fn spawn_full_screenshot(app: AppHandle, state: SharedBridge, notice_revision: u64) {
     tauri::async_runtime::spawn(async move {
         let result = tokio::task::spawn_blocking(|| {
-            let (png, width, height) = capture_primary_png()?;
-            build_screenshot_message(png, width, height)
+            let (jpeg, width, height) = capture_primary_jpeg()?;
+            build_screenshot_artifact(jpeg, width, height, ScreenshotFormat::Jpeg)
         })
         .await
         .context("screen capture task failed")
@@ -631,7 +633,7 @@ fn spawn_cropped_screenshot(
     tauri::async_runtime::spawn(async move {
         let result = tokio::task::spawn_blocking(move || {
             let (png, width, height) = crop_rgba_to_png(&pending.pixels, rect)?;
-            build_screenshot_message(png, width, height)
+            build_screenshot_artifact(png, width, height, ScreenshotFormat::Png)
         })
         .await
         .context("screenshot encode task failed")
@@ -667,7 +669,7 @@ fn send_screenshot_artifact(
         guard.screenshot_tx.clone()
     };
 
-    if tx.send(artifact.message).is_err() {
+    if tx.send(artifact.clone()).is_err() {
         state
             .lock()
             .expect("bridge state poisoned")

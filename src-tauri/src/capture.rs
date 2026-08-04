@@ -10,6 +10,7 @@ use image::{
 };
 use screenshots::Screen;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::protocol::ServerMessage;
@@ -17,8 +18,33 @@ use crate::protocol::ServerMessage;
 #[derive(Debug, Clone)]
 pub struct ScreenshotArtifact {
     pub id: String,
-    pub message: ServerMessage,
+    pub metadata: ServerMessage,
+    pub bytes: Arc<Vec<u8>>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenshotFormat {
+    Jpeg,
+    Png,
+}
+
+impl ScreenshotFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Jpeg => "jpg",
+            Self::Png => "png",
+        }
+    }
+
+    fn mime_type(self) -> &'static str {
+        match self {
+            Self::Jpeg => "image/jpeg",
+            Self::Png => "image/png",
+        }
+    }
+}
+
+pub const FULLSCREEN_JPEG_QUALITY: u8 = 90;
 
 #[derive(Debug, Clone)]
 pub struct CapturedScreen {
@@ -82,10 +108,10 @@ impl SelectionRatios {
     }
 }
 
-pub fn capture_primary_png() -> Result<(Vec<u8>, u32, u32)> {
+pub fn capture_primary_jpeg() -> Result<(Vec<u8>, u32, u32)> {
     let capture = capture_primary_raw()?;
-    let png = encode_rgba_png_fast(&capture.pixels)?;
-    Ok((png, capture.width, capture.height))
+    let jpeg = encode_rgba_jpeg(&capture.pixels, FULLSCREEN_JPEG_QUALITY)?;
+    Ok((jpeg, capture.width, capture.height))
 }
 
 pub fn capture_primary_raw() -> Result<CapturedScreen> {
@@ -125,7 +151,7 @@ pub fn crop_rgba_to_png(image: &RgbaImage, rect: SelectionRect) -> Result<(Vec<u
 
 pub fn encode_rgba_png_fast(image: &RgbaImage) -> Result<Vec<u8>> {
     let mut png = Vec::new();
-    PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::NoFilter)
+    PngEncoder::new_with_quality(&mut png, CompressionType::Fast, FilterType::Adaptive)
         .write_image(
             image.as_raw(),
             image.width(),
@@ -165,29 +191,33 @@ pub fn preview_from_rgba(image: &RgbaImage) -> Result<PendingPreview> {
     })
 }
 
-pub fn build_screenshot_message(
-    png: Vec<u8>,
+pub fn build_screenshot_artifact(
+    bytes: Vec<u8>,
     width: u32,
     height: u32,
+    format: ScreenshotFormat,
 ) -> Result<ScreenshotArtifact> {
     let now = Local::now();
-    let filename = format!("PC_{}.png", now.format("%Y%m%d_%H%M%S"));
+    let filename = format!("PC_{}.{}", now.format("%Y%m%d_%H%M%S"), format.extension());
     let mut hasher = Sha256::new();
-    hasher.update(&png);
+    hasher.update(&bytes);
     let sha256 = format!("{:x}", hasher.finalize());
 
     let id = Uuid::new_v4().to_string();
+    let byte_length = bytes.len() as u64;
     Ok(ScreenshotArtifact {
         id: id.clone(),
-        message: ServerMessage::Screenshot {
+        metadata: ServerMessage::ScreenshotMeta {
             id,
             filename,
             created_at: now.to_rfc3339(),
             width,
             height,
+            mime_type: format.mime_type().to_string(),
+            byte_length,
             sha256,
-            png_base64: general_purpose::STANDARD.encode(png),
         },
+        bytes: Arc::new(bytes),
     })
 }
 
@@ -240,6 +270,15 @@ mod tests {
     fn jpeg_preview_is_decodable() {
         let image = test_image();
         let jpeg = encode_rgba_jpeg(&image, 85).expect("jpeg encodes");
+        let decoded = image::load_from_memory(&jpeg).expect("jpeg decodes");
+
+        assert_eq!((decoded.width(), decoded.height()), (4, 3));
+    }
+
+    #[test]
+    fn fullscreen_jpeg_keeps_full_dimensions() {
+        let image = test_image();
+        let jpeg = encode_rgba_jpeg(&image, FULLSCREEN_JPEG_QUALITY).expect("jpeg encodes");
         let decoded = image::load_from_memory(&jpeg).expect("jpeg decodes");
 
         assert_eq!((decoded.width(), decoded.height()), (4, 3));
@@ -307,5 +346,30 @@ mod tests {
 
         assert_eq!((rect.x, rect.y), (999, 499));
         assert_eq!((rect.width, rect.height), (1, 1));
+    }
+
+    #[test]
+    fn screenshot_artifact_describes_binary_payload() {
+        let bytes = vec![1, 2, 3, 4];
+        let artifact = build_screenshot_artifact(bytes.clone(), 4, 3, ScreenshotFormat::Jpeg)
+            .expect("artifact builds");
+
+        assert_eq!(artifact.bytes.as_ref(), &bytes);
+        match artifact.metadata {
+            ServerMessage::ScreenshotMeta {
+                filename,
+                mime_type,
+                byte_length,
+                sha256,
+                ..
+            } => {
+                assert!(filename.ends_with(".jpg"));
+                assert_eq!(mime_type, "image/jpeg");
+                assert_eq!(byte_length, bytes.len() as u64);
+                let expected = format!("{:x}", Sha256::digest(&bytes));
+                assert_eq!(sha256, expected);
+            }
+            _ => panic!("expected screenshot metadata"),
+        }
     }
 }
