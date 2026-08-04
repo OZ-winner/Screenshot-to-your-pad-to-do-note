@@ -25,17 +25,17 @@
 
 ### 发布版安装
 
-普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.3](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.3) 下载同一版本的两个文件：
+普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.4](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.4) 下载同一版本的两个文件：
 
-- Windows 电脑端：`ScreenshotToPad-Windows-0.1.3-x64-setup.exe`
-- Android 平板端：`ScreenshotToPad-Android-0.1.3-debug.apk`
+- Windows 电脑端：`ScreenshotToPad-Windows-0.1.4-x64-setup.exe`
+- Android 平板端：`ScreenshotToPad-Android-0.1.4-debug.apk`
 - 校验文件：`SHA256SUMS.txt`
 
 安装后让电脑和平板连接同一个 Wi-Fi，先启动 Windows 端，再打开平板 App 扫码配对。首次使用需要在 Windows 防火墙中允许专用网络通信，并在平板系统设置里允许悬浮窗权限。
 
 ### 1. 启动 Windows 端
 
-发布版用户双击安装 `ScreenshotToPad-Windows-0.1.3-x64-setup.exe`，安装完成后启动“截图直传”。
+发布版用户双击安装 `ScreenshotToPad-Windows-0.1.4-x64-setup.exe`，安装完成后启动“截图直传”。
 
 在项目根目录运行：
 
@@ -43,11 +43,13 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev-windows.ps1
 ```
 
-也可以运行项目里的 `启动截图直传-Windows端.bat`，或运行 `scripts\create-desktop-shortcut.ps1` 后使用桌面快捷方式。
+`启动截图直传-Windows端.bat` 是开发入口，会检查依赖并按需重新构建。日常使用请安装发布版并使用安装器创建的“截图直传”快捷方式；`scripts\create-desktop-shortcut.ps1` 也只会指向已安装或已构建的正式 EXE，不会启动开发构建。
 
 首次启动时，如果 Windows 防火墙弹窗，请允许专用网络通信。主界面会显示局域网地址、配对码和二维码。
 
 点击主窗口右上角关闭按钮会隐藏到系统托盘，平板连接和快捷键仍可继续使用。点击托盘图标恢复窗口；需要完全退出时，在托盘菜单选择“退出”。
+
+正式版不会显示控制台窗口，并且只允许一个实例运行。重复点击快捷方式会直接显示已经在后台运行的主窗口。
 
 ### 2. 安装 Android 平板端
 
@@ -113,7 +115,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.
 安装包输出位置：
 
 ```text
-src-tauri\target\release\bundle\nsis\截图直传_0.1.3_x64-setup.exe
+src-tauri\target\release\bundle\nsis\截图直传_0.1.4_x64-setup.exe
 ```
 
 ## Android 开发配置
