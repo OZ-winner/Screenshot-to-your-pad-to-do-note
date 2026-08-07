@@ -27,17 +27,17 @@
 
 ### 发布版安装
 
-普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.4](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.4) 下载同一版本的两个文件：
+普通用户不需要安装开发环境。进入 [GitHub Releases v0.1.5](https://github.com/OZ-winner/Screenshot-to-your-pad-to-do-note/releases/tag/v0.1.5) 下载同一版本的两个文件：
 
-- Windows 电脑端：`ScreenshotToPad-Windows-0.1.4-x64-setup.exe`
-- Android 平板端：`ScreenshotToPad-Android-0.1.4-debug.apk`
+- Windows 电脑端：`ScreenshotToPad-Windows-0.1.5-x64-setup.exe`
+- Android 平板端：`ScreenshotToPad-Android-0.1.5-debug.apk`
 - 校验文件：`SHA256SUMS.txt`
 
 安装后让电脑和平板连接同一个 Wi-Fi，先启动 Windows 端，再打开平板 App 扫码配对。首次使用需要在 Windows 防火墙中允许专用网络通信，并在平板系统设置里允许悬浮窗权限。
 
 ### 1. 启动 Windows 端
 
-发布版用户双击安装 `ScreenshotToPad-Windows-0.1.4-x64-setup.exe`，安装完成后启动“截图直传”。
+发布版用户双击安装 `ScreenshotToPad-Windows-0.1.5-x64-setup.exe`，安装完成后启动“截图直传”。
 
 在项目根目录运行：
 
@@ -117,7 +117,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows.
 安装包输出位置：
 
 ```text
-src-tauri\target\release\bundle\nsis\截图直传_0.1.4_x64-setup.exe
+src-tauri\target\release\bundle\nsis\截图直传_0.1.5_x64-setup.exe
 ```
 
 ## Android 开发配置
