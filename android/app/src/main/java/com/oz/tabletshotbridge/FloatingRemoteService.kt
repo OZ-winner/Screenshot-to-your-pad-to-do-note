@@ -1,7 +1,11 @@
 package com.oz.tabletshotbridge
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
@@ -26,6 +30,8 @@ import kotlinx.coroutines.launch
 class FloatingRemoteService : Service() {
     companion object {
         const val ACTION_START_SELECTION = "com.oz.tabletshotbridge.START_SELECTION"
+        private const val NOTIFICATION_CHANNEL_ID = "floating_remote_connection"
+        private const val NOTIFICATION_ID = 1001
         private const val FLOATING_BALL_SIZE = 108
         private const val FLOATING_BALL_EDGE_SLOP = 12
         private const val FLOATING_INITIAL_X = 60
@@ -40,9 +46,15 @@ class FloatingRemoteService : Service() {
     private var lastExpandDirection = ExpandDirection.Right
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var screenshotNotice: View? = null
+    private var connectionStatusView: TextView? = null
+    private var connectionDotView: View? = null
+    private var playPauseButton: ImageButton? = null
+    private var connectionHealth = ConnectionHealth.Disconnected
+    private var isPlaybackPaused = false
 
     override fun onCreate() {
         super.onCreate()
+        startConnectionForegroundService()
         BridgeClient.init(applicationContext)
         BridgeClient.connectSaved()
         if (!Settings.canDrawOverlays(this)) {
@@ -53,6 +65,18 @@ class FloatingRemoteService : Service() {
         serviceScope.launch {
             BridgeClient.captureFeedback.collect { feedback ->
                 showCaptureFeedback(feedback)
+            }
+        }
+        serviceScope.launch {
+            BridgeClient.connectionHealth.collect { health ->
+                connectionHealth = health
+                updateConnectionIndicators()
+            }
+        }
+        serviceScope.launch {
+            BridgeClient.playPauseAcknowledged.collect {
+                isPlaybackPaused = !isPlaybackPaused
+                updatePlayPauseButton()
             }
         }
     }
@@ -84,6 +108,7 @@ class FloatingRemoteService : Service() {
         selectionOverlay = null
         screenshotNotice?.let { windowManager.removeView(it) }
         screenshotNotice = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -95,6 +120,8 @@ class FloatingRemoteService : Service() {
         revealAfterPosition: Boolean = false,
     ) {
         val gripView = grip()
+        lateinit var statusView: TextView
+        lateinit var playbackButton: ImageButton
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -106,23 +133,29 @@ class FloatingRemoteService : Service() {
             } else {
                 R.drawable.ic_collapse_right
             }
+            val status = connectionStatus().also { statusView = it }
+            val playback = iconButton(R.drawable.ic_pause, "暂停播放") {
+                BridgeClient.command("play_pause")
+            }.also { playbackButton = it }
             val buttons = listOf(
                 iconButton(R.drawable.ic_screenshot_area, "选择截图区域") { showSelectionOverlay() },
                 iconButton(R.drawable.ic_screenshot_fullscreen, "快速截全屏") {
                     BridgeClient.command("screenshot")
                 },
                 iconButton(R.drawable.ic_rewind, "后退 5 秒") { BridgeClient.command("seek_back_5") },
-                iconButton(R.drawable.ic_pause, "暂停播放") { BridgeClient.command("play_pause") },
+                playback,
                 iconButton(R.drawable.ic_fast_forward, "快进 5 秒") { BridgeClient.command("seek_forward_5") },
                 iconButton(collapseIcon, "收起为悬浮球") { collapseToBall() },
             )
             if (expandDirection == ExpandDirection.Right) {
                 addView(gripView)
+                addView(status)
                 buttons.forEach { addView(it) }
             } else {
                 // Keep rewind left of fast-forward in screen order on either side.
                 addView(buttons.last())
                 buttons.dropLast(1).forEach { addView(it) }
+                addView(status)
                 addView(gripView)
             }
         }
@@ -157,6 +190,8 @@ class FloatingRemoteService : Service() {
         removeFloatingControl()
         panel = view
         params = layoutParams
+        connectionStatusView = statusView
+        playPauseButton = playbackButton
         floatingState = if (expandDirection == ExpandDirection.Right) {
             FloatingState.ExpandedRight
         } else {
@@ -164,6 +199,8 @@ class FloatingRemoteService : Service() {
         }
         lastExpandDirection = expandDirection
         windowManager.addView(view, layoutParams)
+        updateConnectionIndicators()
+        updatePlayPauseButton()
         view.post {
             positionExpandedPanel(view, layoutParams, startX, startY, expandDirection)
             if (revealAfterPosition) {
@@ -220,18 +257,32 @@ class FloatingRemoteService : Service() {
         }
     }
 
-    private fun floatingBallView(): ImageButton {
-        return ImageButton(this).apply {
-            contentDescription = "展开遥控器"
-            setImageResource(R.drawable.ic_screenshot_area)
-            setColorFilter(0xffffffff.toInt())
-            background = roundedBackground(0xcc16a34a.toInt(), FLOATING_BALL_SIZE / 2f, oval = true)
-            elevation = 14f
-            minimumWidth = FLOATING_BALL_SIZE
-            minimumHeight = FLOATING_BALL_SIZE
-            setPadding(27)
-            isClickable = false
-            isFocusable = false
+    private fun floatingBallView(): FrameLayout {
+        return FrameLayout(this).apply {
+            addView(
+                ImageButton(this@FloatingRemoteService).apply {
+                    contentDescription = "展开遥控器"
+                    setImageResource(R.drawable.ic_screenshot_area)
+                    setColorFilter(0xffffffff.toInt())
+                    background = roundedBackground(0xcc16a34a.toInt(), FLOATING_BALL_SIZE / 2f, oval = true)
+                    elevation = 14f
+                    setPadding(27)
+                    isClickable = false
+                    isFocusable = false
+                },
+                FrameLayout.LayoutParams(FLOATING_BALL_SIZE, FLOATING_BALL_SIZE),
+            )
+            addView(
+                View(this@FloatingRemoteService).apply {
+                    connectionDotView = this
+                    elevation = 18f
+                },
+                FrameLayout.LayoutParams(22, 22, Gravity.TOP or Gravity.END).apply {
+                    topMargin = 8
+                    marginEnd = 8
+                },
+            )
+            applyConnectionDot(connectionDotView)
         }
     }
 
@@ -379,6 +430,85 @@ class FloatingRemoteService : Service() {
         panel?.let { windowManager.removeView(it) }
         panel = null
         params = null
+        connectionStatusView = null
+        connectionDotView = null
+        playPauseButton = null
+    }
+
+    private fun connectionStatus(): TextView {
+        return TextView(this).apply {
+            textSize = 12f
+            gravity = Gravity.CENTER
+            minWidth = 82
+            minHeight = 58
+            setPadding(8, 0, 8, 0)
+        }
+    }
+
+    private fun updateConnectionIndicators() {
+        val (label, color) = when (connectionHealth) {
+            ConnectionHealth.Connected -> "● 已连接" to 0xff4ade80.toInt()
+            ConnectionHealth.Connecting -> "● 连接中" to 0xfffbbf24.toInt()
+            ConnectionHealth.Disconnected -> "● 已断开" to 0xfff87171.toInt()
+        }
+        connectionStatusView?.apply {
+            text = label
+            setTextColor(color)
+        }
+        applyConnectionDot(connectionDotView, color)
+    }
+
+    private fun applyConnectionDot(dot: View?, color: Int = connectionColor()) {
+        dot?.background = roundedBackground(color, 11f, oval = true).apply {
+            setStroke(3, Color.WHITE)
+        }
+    }
+
+    private fun connectionColor(): Int = when (connectionHealth) {
+        ConnectionHealth.Connected -> 0xff22c55e.toInt()
+        ConnectionHealth.Connecting -> 0xfff59e0b.toInt()
+        ConnectionHealth.Disconnected -> 0xffef4444.toInt()
+    }
+
+    private fun updatePlayPauseButton() {
+        playPauseButton?.apply {
+            if (isPlaybackPaused) {
+                setImageResource(R.drawable.ic_play)
+                contentDescription = "继续播放"
+            } else {
+                setImageResource(R.drawable.ic_pause)
+                contentDescription = "暂停播放"
+            }
+        }
+    }
+
+    private fun startConnectionForegroundService() {
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.createNotificationChannel(
+            NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "悬浮遥控连接",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "保持截图直传与悬浮遥控连接"
+                setShowBadge(false)
+            },
+        )
+        val launchIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = android.app.Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_screenshot_area)
+            .setContentTitle("截图直传正在后台连接")
+            .setContentText("悬浮遥控可随时使用")
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
+        startForeground(NOTIFICATION_ID, notification)
     }
 
     private fun positionExpandedPanel(

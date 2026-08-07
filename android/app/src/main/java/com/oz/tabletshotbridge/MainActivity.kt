@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -65,7 +66,10 @@ class MainActivity : ComponentActivity() {
                                 openOverlayPermission()
                             } else {
                                 BridgeClient.connectSaved()
-                                startService(Intent(this, FloatingRemoteService::class.java))
+                                ContextCompat.startForegroundService(
+                                    this,
+                                    Intent(this, FloatingRemoteService::class.java),
+                                )
                             }
                         },
                         startSelectionScreenshot = {
@@ -73,7 +77,8 @@ class MainActivity : ComponentActivity() {
                                 openOverlayPermission()
                             } else {
                                 BridgeClient.connectSaved()
-                                startService(
+                                ContextCompat.startForegroundService(
+                                    this,
                                     Intent(this, FloatingRemoteService::class.java)
                                         .setAction(FloatingRemoteService.ACTION_START_SELECTION),
                                 )

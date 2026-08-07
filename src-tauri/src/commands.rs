@@ -186,10 +186,16 @@ async fn handle_client_message(
                     }))
                 }
                 command => {
+                    let message = match command {
+                        RemoteCommand::PlayPause => "play_pause",
+                        RemoteCommand::SeekBack5 => "seek_back_5",
+                        RemoteCommand::SeekForward5 => "seek_forward_5",
+                        RemoteCommand::Screenshot => unreachable!(),
+                    };
                     execute_media_command(command)?;
                     Ok(Some(ServerMessage::Status {
                         status: BridgeStatus::Connected,
-                        message: "command sent".to_string(),
+                        message: message.to_string(),
                     }))
                 }
             }
